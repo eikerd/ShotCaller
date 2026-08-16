@@ -67,24 +67,81 @@ C,res=8,hz=15,mode=cont,max_hz=15
 F,0,2697,8,15,1485:6:10,...
 ```
 
-## The live scope (`tools/`)
+## The live scope + shot detector (`tools/`)
 
 ```
 python3 tools/viz_server.py     # then open http://localhost:8420
 ```
 
 `viz_server.py` reads the frame stream off the serial port, fans it out to
-the browser over Server-Sent Events, and relays single-character commands
-back to the board. `viz.html` is the UI: a live per-zone distance heatmap,
-measured frame-rate/jitter tiles, two strip charts (closest valid distance,
-and time between frames), and an **event capture** trigger -- arm it, throw
-something past the sensor, and it holds the frames around the event so you
-can step through them one at a time.
+the browser over Server-Sent Events, relays single-character commands back to
+the board, and persists calibration and labelled throws to `captures/`.
+SSE rather than WebSockets because the data is strictly one-directional at up
+to 60Hz and SSE needs nothing outside the standard library. Everything runs
+locally; nothing is uploaded anywhere.
 
-SSE rather than WebSockets because the data is strictly one-directional at
-up to 60Hz and SSE needs nothing outside the standard library.
+`viz.html` is the UI, top to bottom: **shot detector**, field-of-view heatmap,
+the two strip charts, then timing/signal-quality diagnostics.
 
-Everything runs locally; nothing is uploaded anywhere.
+### Physical setup this is built around
+
+The board clips to the **back rim of the trash can, at rim level**, looking
+forward across the opening. An object that actually goes in passes through the
+~12-inch ring directly in front of the board -- which on the sensor grid means
+**a small set of zones, close in** (bottom-centre by default). An object that
+misses flies through the field of view without ever registering in those zones
+at close range. That geometry, not statistics, is what the detector keys on.
+
+### The detector (Missile Command, basically)
+
+A stateful tracker, not a per-frame classifier. Three questions in order:
+
+1. **Is something there?** Closest valid reading nearer than `trackRange`
+   (default 1500mm) starts a track.
+2. **Is it actually being thrown?** The track must cover `minTravel` zones
+   (default 2) at `minSpeed` zones/sec (default 6). This is what stops a hand
+   reaching into frame from being called a shot -- verified: a hand parked in
+   a basket zone at 250mm for five seconds produces no event.
+3. **Where did the track end?** If any frame had the closest zone inside the
+   basket mask *and* closer than `ringDepth` (default 400mm), it went in.
+
+Zone travel is Chebyshev distance on the grid, so a diagonal hop counts as one
+zone. A 1.2s refractory gap after each throw keeps a bounce from being counted
+as a second shot.
+
+**Three sounds, in the order they fire** (all synthesised with WebAudio -- no
+audio files in the repo, nothing to fetch):
+
+| Event | When | Sound |
+|---|---|---|
+| Inbound | mid-flight, as soon as travel+speed qualify | two-note electronic blip |
+| In | track ended through a basket zone | rising major arpeggio |
+| Miss | track ended without one | descending sawtooth |
+
+An optional Voice toggle also speaks the result via `speechSynthesis`.
+
+### Calibrating the basket zones
+
+Click **Set basket zones**, then click cells in the heatmap. Easiest way to
+find the right ones: drop something into the can slowly and watch which cells
+light up close. The mask is stored **per grid resolution** (`captures/detector.json`)
+because zone numbering differs entirely between 4x4 and 8x8 -- a mask
+calibrated at one is meaningless at the other.
+
+Use **⚡ Throw mode** (4x4 at 60Hz) for actual throwing. At 8x8/15Hz an object
+crossing the opening is seen in ~4 frames; at 4x4/60Hz it is ~17.
+
+### Labelling and scoring
+
+After each detected throw the frames are held for frame-by-frame scrubbing,
+with **Went in / Missed** buttons. Labels are ground truth, stored in
+`captures/throws/`, and are used to **score the rules** -- the scoreboard shows
+how often the detector agreed with you. Low accuracy means the basket mask or
+`ringDepth` needs adjusting, not that the model needs more data.
+
+This is deliberately not a learned classifier: with the geometry this
+explicit, a handful of examples is far more useful as a correctness check on
+thresholds than as training data.
 
 ### What the two bring-up bugs actually were
 
@@ -155,8 +212,10 @@ ShotCaller/                     <- repo root, git-initialized
   capture_serial.py             <- UART capture helper
   tools/
     viz_server.py               <- serial -> browser bridge (SSE + commands)
-    viz.html                    <- the live scope UI
-  captures/                     <- saved frame captures (gitignored)
+    viz.html                    <- scope UI + shot detector
+  captures/                     <- gitignored
+    detector.json               <- basket zone mask + tracker thresholds
+    throws/                     <- labelled throws (ground truth)
   HANDOFF.md                    <- this file
   .gitignore                    <- excludes build/, .metadata/, .settings/
   ShotCaller/                   <- actual CubeIDE project dir
@@ -256,24 +315,25 @@ the STM32F4 MCU package, which may unlock the normal wizard.
 
 ## Next steps
 
-1. **Characterise with real throws.** Open the scope, arm the capture
-   trigger, and throw things past the sensor at both 8x8/15Hz and
-   4x4/60Hz. The questions to answer from the recordings:
-   - How many frames does a thrown object actually appear in?
-   - Does it register as a clean distance dip, or as zones dropping to
-     "no valid target" (status 255) because a fast/small/dark object
-     doesn't return enough signal?
-   - Does the closest-zone position trace a readable path across the grid,
-     or does it jump around?
-   - How different does an "in" trajectory look from a "miss"?
-2. Mount the sensor at the actual rim and record a calibration baseline
-   (the empty trash-can opening) -- classification will be a comparison
-   against that baseline, so it needs to be stable first.
-3. Only then build hit/miss classification, informed by 1 and 2 rather
-   than guessed: likely tracking the minimum-distance zone across frames
-   against a calibrated opening mask.
-4. Audio playback trigger (I2S DAC, e.g. MAX98357A) once classification
-   works.
+1. **Clip the board to the rim and calibrate the basket zones.** Drop things
+   in slowly and watch which cells light up close. Nothing downstream works
+   until the mask reflects the real mounting -- including which way up the
+   grid reads, which depends on how the board is clipped.
+2. **Throw things and label every call.** Switch to Throw mode (4x4/60Hz),
+   start the detector, throw, label. The scoreboard then tells you whether
+   the geometry is right. Questions the recordings should answer:
+   - Does a made shot reliably register in the mask zones, or can a fast
+     object pass through *between* frames even at 60Hz?
+   - Does a fast/small/dark object return enough signal at all, or do zones
+     go to status 255 (no valid target) exactly when it matters?
+   - Does `ringDepth` cleanly separate "through the opening" from "flew past
+     just above the rim"?
+   - Does a rim bounce produce one track or two?
+3. Tune `ringDepth` / `minSpeed` / the mask from the labelled disagreements,
+   rather than adding model complexity.
+4. Audio playback on-device (I2S DAC, e.g. MAX98357A) once the calls are
+   reliable. The sounds currently play in the browser, which is fine for the
+   bench rig but not for a standalone clip-on unit.
 5. Longer-term: port the validated classification logic to a standalone
    ESP32 + VL53L5CX carrier board (Pololu/SparkFun), dropping the Nucleo
    dev-rig entirely for the final clip-on form factor. The ESP32 can serve

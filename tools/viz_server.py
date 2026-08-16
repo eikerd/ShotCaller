@@ -46,6 +46,72 @@ REPO = os.path.dirname(HERE)
 HISTORY = 1800
 
 
+THROWS_DIR = os.path.join(REPO, "captures", "throws")
+CONFIG_PATH = os.path.join(REPO, "captures", "detector.json")
+
+
+# ---- detector calibration -----------------------------------------------
+# Which zones correspond to the basket opening, plus the tracker thresholds.
+# This describes the physical rig (where the board is clipped, how big the
+# can is), so it belongs on disk next to the recordings rather than in one
+# browser's localStorage.
+
+def load_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(cfg):
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+# ---- labelled training throws -------------------------------------------
+# Kept as one JSON file per throw on disk rather than in memory, so a training
+# set survives a page reload, a server restart, and a session boundary. The
+# browser is the only thing that interprets them; this process just stores.
+
+def load_throws():
+    if not os.path.isdir(THROWS_DIR):
+        return []
+    out = []
+    for name in sorted(os.listdir(THROWS_DIR)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(THROWS_DIR, name)) as f:
+                t = json.load(f)
+            t["id"] = name[:-5]
+            out.append(t)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def save_throw(payload):
+    os.makedirs(THROWS_DIR, exist_ok=True)
+    tid = time.strftime("%Y%m%d-%H%M%S") + f"-{payload['label']}"
+    with open(os.path.join(THROWS_DIR, tid + ".json"), "w") as f:
+        json.dump(payload, f)
+    return tid
+
+
+def delete_throw(tid):
+    # Reject anything that could climb out of the throws directory.
+    if not tid or "/" in tid or ".." in tid:
+        return False
+    path = os.path.join(THROWS_DIR, tid + ".json")
+    try:
+        os.remove(path)
+        return True
+    except OSError:
+        return False
+
+
 def autodetect_port():
     """Nucleo ST-LINK VCP shows up as /dev/cu.usbmodem* on macOS."""
     candidates = sorted(glob.glob("/dev/cu.usbmodem*"))
@@ -250,8 +316,49 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/save":
             self.save_capture()
 
+        elif url.path == "/throws/list":
+            self._send(200, json.dumps({"throws": load_throws()}),
+                       "application/json")
+
+        elif url.path == "/throws/delete":
+            tid = (qs.get("id") or [""])[0]
+            self._send(200, json.dumps({"deleted": delete_throw(tid)}),
+                       "application/json")
+
+        elif url.path == "/config":
+            self._send(200, json.dumps(load_config()), "application/json")
+
         else:
             self._send(404, "not found")
+
+    def do_POST(self):
+        url = urlparse(self.path)
+
+        if url.path not in ("/throws/save", "/config"):
+            self._send(404, "not found")
+            return
+
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError as e:
+            self._send(400, f"bad JSON: {e}")
+            return
+
+        if url.path == "/config":
+            save_config(payload)
+            self._send(200, json.dumps({"saved": True}), "application/json")
+            return
+
+        label = payload.get("label")
+        if label not in ("in", "miss"):
+            self._send(400, "label must be 'in' or 'miss'")
+            return
+
+        tid = save_throw(payload)
+        print(f"[training] saved {label} throw {tid} "
+              f"({len(payload.get('frames') or [])} frames)", flush=True)
+        self._send(200, json.dumps({"id": tid}), "application/json")
 
     def stream_events(self):
         self.send_response(200)

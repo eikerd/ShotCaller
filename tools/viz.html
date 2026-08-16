@@ -35,31 +35,19 @@
     --grid:         #2c2c2a;
     --axis:         #383835;
     --series-1:     #3987e5;
-    --good:         #0ca30c;
-    --warning:      #fab219;
-    --critical:     #d03b3b;
     --shadow: none;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane:        #0d0d0d;
-  --surface-1:    #1a1a19;
-  --surface-2:    #232322;
-  --text-primary: #ffffff;
-  --text-secondary:#c3c2b7;
-  --text-muted:   #898781;
-  --grid:         #2c2c2a;
-  --axis:         #383835;
-  --series-1:     #3987e5;
-  --shadow: none;
+  --plane: #0d0d0d; --surface-1: #1a1a19; --surface-2: #232322;
+  --text-primary: #ffffff; --text-secondary:#c3c2b7; --text-muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --series-1: #3987e5; --shadow: none;
 }
 
 * { box-sizing: border-box; }
 body {
-  margin: 0;
-  background: var(--plane);
-  color: var(--text-primary);
+  margin: 0; background: var(--plane); color: var(--text-primary);
   font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
 }
@@ -69,13 +57,10 @@ header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margi
 h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
 .sub { color: var(--text-muted); font-size: 12.5px; }
 .spacer { flex: 1; }
-
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
-.dot.live { background: var(--good); }
-.dot.dead { background: var(--critical); }
+.dot.live { background: var(--good); } .dot.dead { background: var(--critical); }
 
-/* Filters/controls sit in one row above everything they affect. */
 .controls {
   display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
   background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px;
@@ -88,63 +73,104 @@ button, select {
   background: var(--surface-2); border: 1px solid var(--axis);
   border-radius: 7px; padding: 4px 10px; cursor: pointer; min-height: 30px;
 }
-button:hover { border-color: var(--series-1); }
+button:hover:not(:disabled) { border-color: var(--series-1); }
+button:disabled { opacity: .45; cursor: not-allowed; }
 button.on { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+button.big { font-size: 14px; font-weight: 600; padding: 8px 16px; min-height: 40px; }
+button.win { border-color: var(--good); }
+button.win:hover:not(:disabled) { background: var(--good); border-color: var(--good); color: #fff; }
+button.lose { border-color: var(--critical); }
+button.lose:hover:not(:disabled) { background: var(--critical); border-color: var(--critical); color: #fff; }
 input[type=range] { accent-color: var(--series-1); width: 130px; }
 input[type=number] {
-  font: inherit; font-size: 13px; width: 74px; padding: 4px 6px; min-height: 30px;
+  font: inherit; font-size: 13px; width: 70px; padding: 4px 6px; min-height: 30px;
   color: var(--text-primary); background: var(--surface-2);
   border: 1px solid var(--axis); border-radius: 7px;
 }
 .divider { width: 1px; align-self: stretch; background: var(--grid); }
 
-.cols { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
-@media (max-width: 900px) { .cols { grid-template-columns: minmax(0,1fr); } }
-
 .card {
   background: var(--surface-1); border: 1px solid var(--grid);
-  border-radius: 10px; padding: 14px; box-shadow: var(--shadow);
+  border-radius: 10px; padding: 14px; box-shadow: var(--shadow); margin-bottom: 16px;
 }
-.card h2 {
-  font-size: 13px; font-weight: 600; margin: 0 0 2px;
-  letter-spacing: -.005em;
-}
+.card h2 { font-size: 13px; font-weight: 600; margin: 0 0 2px; letter-spacing: -.005em; }
 .card .note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.two-col { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+@media (max-width: 860px) { .two-col { grid-template-columns: minmax(0,1fr); } }
 
-/* ---- heatmap ---- */
-#grid { display: grid; gap: 2px; aspect-ratio: 1; }
+/* ---- detector ---- */
+.det-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.05fr); gap: 18px; }
+@media (max-width: 860px) { .det-cols { grid-template-columns: minmax(0,1fr); } }
+
+.verdict {
+  border-radius: 10px; padding: 14px 16px; margin: 4px 0 12px;
+  background: var(--surface-2); border: 2px solid transparent; min-height: 78px;
+}
+.verdict .big-word { font-size: 30px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.verdict .meta { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.verdict.in { border-color: var(--good); } .verdict.in .big-word { color: var(--good); }
+.verdict.miss { border-color: var(--critical); } .verdict.miss .big-word { color: var(--critical); }
+.verdict.inbound { border-color: var(--warning); } .verdict.inbound .big-word { color: var(--warning); }
+.verdict.idle .big-word { color: var(--text-muted); font-size: 17px; font-weight: 600; }
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row + .row { margin-top: 10px; }
+.pill { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--text-secondary); }
+.pill.armed { background: var(--warning); color: #0b0b0b; font-weight: 600; }
+.pill.ok { background: var(--good); color: #fff; font-weight: 600; }
+.pill.bad { background: var(--critical); color: #fff; font-weight: 600; }
+
+fieldset {
+  border: 1px solid var(--grid); border-radius: 8px; padding: 9px 11px; margin: 12px 0 0;
+}
+legend { font-size: 11.5px; color: var(--text-muted); padding: 0 5px; }
+.tune { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px 12px; }
+.tune .ctl { justify-content: space-between; }
+
+.throwlist { margin-top: 10px; max-height: 170px; overflow: auto; font-size: 12px; }
+.throwlist div.tr { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--grid); }
+.throwlist .tag { font-weight: 600; width: 38px; }
+.throwlist .tag.in { color: var(--good); } .throwlist .tag.miss { color: var(--critical); }
+.throwlist .del { margin-left: auto; cursor: pointer; color: var(--text-muted); border: none; background: none; padding: 0 4px; min-height: 0; }
+.throwlist .del:hover { color: var(--critical); }
+.wrongmark { color: var(--critical); font-weight: 600; }
+
+/* ---- heatmap (smaller) ---- */
+.fov { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+#grid { display: grid; gap: 2px; aspect-ratio: 1; width: 100%; max-width: 360px; }
 .cell {
   position: relative; border-radius: 4px; display: flex;
   align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 500; cursor: crosshair;
+  font-size: 10px; font-weight: 500; cursor: crosshair;
   /* Deliberately no colour transition: a fade makes a zone that just lost its
    * target read as a close object for a frame or two, and smears real motion
    * across frames. Each frame must be shown as measured. */
 }
 .cell.invalid { background: var(--surface-2) !important; color: var(--text-muted); }
-.cell .zn { position: absolute; top: 2px; left: 3px; font-size: 8.5px; opacity: .5; font-weight: 400; }
+.cell .zn { position: absolute; top: 1px; left: 3px; font-size: 8px; opacity: .5; font-weight: 400; }
 .cell.peak { outline: 2px solid var(--warning); outline-offset: -2px; }
-/* Motion trail: where the closest zone was over the preceding frames. */
-.cell .trail {
-  position: absolute; inset: 0; border-radius: 4px;
-  border: 2px solid var(--warning); pointer-events: none;
-}
+/* Basket zones: a persistent inset ring, so the calibrated opening is visible
+   during normal use, not just while editing. */
+.cell.mask { box-shadow: inset 0 0 0 2.5px var(--good); }
+.cell .trail { position: absolute; inset: 0; border-radius: 4px; border: 2px solid var(--warning); pointer-events: none; }
+#grid.editing .cell { cursor: pointer; }
+#grid.editing { outline: 2px dashed var(--good); outline-offset: 5px; }
 
-/* ---- stat tiles ---- */
+.legend { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-secondary); }
+.ramp { height: 9px; flex: 1; min-width: 90px; border-radius: 5px; }
+.legend-row { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; font-size: 11.5px; color: var(--text-secondary); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.swatch.ring { background: transparent; box-shadow: inset 0 0 0 2.5px var(--good); }
+.fov-side { flex: 1; min-width: 200px; }
+
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
 .tile { background: var(--surface-2); border-radius: 8px; padding: 9px 11px; }
 .tile .k { font-size: 11px; color: var(--text-muted); }
-.tile .v { font-size: 21px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; }
+.tile .v { font-size: 17px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; }
 .tile .u { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
-.hero .v { font-size: 30px; }
-
-.legend { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 11.5px; color: var(--text-secondary); }
-.ramp { height: 9px; flex: 1; border-radius: 5px; }
-.legend-row { display: flex; gap: 14px; margin-top: 7px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.hero .v { font-size: 26px; }
 
 canvas { display: block; width: 100%; }
-.chart-wrap { position: relative; }
 
 #tip {
   position: fixed; z-index: 40; pointer-events: none; opacity: 0;
@@ -156,25 +182,17 @@ canvas { display: block; width: 100%; }
 #tip .t-h { font-weight: 600; margin-bottom: 3px; }
 #tip .t-r { color: var(--text-secondary); }
 
-table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
-th, td { border: 1px solid var(--grid); padding: 3px 5px; text-align: right; }
-th { color: var(--text-muted); font-weight: 500; }
-#tableView { margin-top: 12px; display: none; max-height: 320px; overflow: auto; }
+table.zones { border-collapse: collapse; width: 100%; font-size: 11px; }
+table.zones th, table.zones td { border: 1px solid var(--grid); padding: 2px 4px; text-align: right; }
+table.zones th { color: var(--text-muted); font-weight: 500; }
+#tableView { margin-top: 12px; display: none; max-height: 300px; overflow: auto; }
 
 .log {
-  margin-top: 16px; font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-secondary); background: var(--surface-1);
   border: 1px solid var(--grid); border-radius: 10px; padding: 10px 12px;
-  max-height: 116px; overflow: auto; white-space: pre-wrap;
+  max-height: 110px; overflow: auto; white-space: pre-wrap;
 }
-.full { grid-column: 1 / -1; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.pill {
-  font-size: 11.5px; padding: 2px 8px; border-radius: 99px;
-  background: var(--surface-2); color: var(--text-secondary);
-}
-.pill.armed { background: var(--warning); color: #0b0b0b; font-weight: 600; }
-.pill.fired { background: var(--good); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -191,15 +209,17 @@ th { color: var(--text-muted); font-weight: 500; }
   <div class="ctl">
     <label>Resolution</label>
     <button id="res8" title="8x8 zones, capped at 15Hz">8×8</button>
-    <button id="res4" title="4x4 zones, up to 60Hz">4×4</button>
+    <button id="res4" title="4x4 zones, up to 60Hz — better for tracking a throw">4×4</button>
   </div>
   <div class="divider"></div>
   <div class="ctl">
     <label>Rate</label>
-    <button id="hzDown" title="Lower the requested ranging frequency">−</button>
-    <span class="pill" id="hzPill">— Hz</span>
-    <button id="hzUp" title="Raise the requested ranging frequency">+</button>
+    <button id="hzDown">−</button><span class="pill" id="hzPill">— Hz</span><button id="hzUp">+</button>
     <button id="hzMax" title="Jump to the sensor's maximum rate for this resolution">Max</button>
+  </div>
+  <div class="divider"></div>
+  <div class="ctl">
+    <button id="throwMode" title="4x4 at 60Hz — 4x the frames through the opening, which is what tracking a throw needs">⚡ Throw mode</button>
   </div>
   <div class="divider"></div>
   <div class="ctl">
@@ -209,120 +229,155 @@ th { color: var(--text-muted); font-weight: 500; }
   </div>
   <div class="divider"></div>
   <div class="ctl">
-    <button id="trailBtn" class="on" title="Mark where the closest zone was in recent frames">Trail</button>
-    <button id="tableBtn" title="Show the current frame as a table">Table</button>
-    <button id="pauseBtn" title="Freeze the view (the board keeps ranging)">Pause</button>
+    <button id="trailBtn" class="on">Trail</button>
+    <button id="tableBtn">Table</button>
+    <button id="pauseBtn">Pause</button>
   </div>
 </div>
 
-<div class="cols">
+<!-- ======================= DETECTOR (top) ======================= -->
+<div class="card">
+  <h2>Shot detector</h2>
+  <p class="note">Tracks inbound objects across the sensor grid, then calls where the track ended: through the basket zones, or not.</p>
 
-  <div class="card">
-    <h2>Field of view — distance per zone</h2>
-    <p class="note" id="gridNote">Looking out from the sensor. Brighter = closer.</p>
+  <div class="det-cols">
+    <div>
+      <div class="verdict idle" id="verdict">
+        <div class="big-word" id="verdictWord">Detector off</div>
+        <div class="meta" id="verdictMeta">Turn the detector on, set the basket zones, and throw something.</div>
+      </div>
+
+      <div class="row">
+        <button id="detBtn" class="big">Start detector</button>
+        <span class="pill" id="detState">idle</span>
+      </div>
+
+      <div class="row">
+        <button id="soundBtn" class="on">🔊 Sound</button>
+        <button id="voiceBtn">Voice</button>
+        <button id="testTrack">Test: inbound</button>
+        <button id="testWin">Test: in</button>
+        <button id="testMiss">Test: miss</button>
+      </div>
+
+      <fieldset>
+        <legend>Basket zones — the ~12&quot; opening in front of the board</legend>
+        <div class="row">
+          <button id="maskBtn">Set basket zones</button>
+          <span class="pill" id="maskCount">0 zones</span>
+          <button id="maskClear">Clear</button>
+        </div>
+        <p class="note" style="margin:8px 0 0">
+          Click cells in the grid below to mark which zones an object passes through
+          when it actually goes in. Easiest way to find them: drop something into the
+          can slowly and watch which cells light up close.
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Tracker thresholds</legend>
+        <div class="tune">
+          <div class="ctl"><label for="trackRange" title="Anything closer than this counts as a target worth tracking">Track range</label><input type="number" id="trackRange" value="1500" min="200" max="4000" step="100"></div>
+          <div class="ctl"><label for="ringDepth" title="How close a zone reading must be to count as passing through the opening">Ring depth</label><input type="number" id="ringDepth" value="400" min="50" max="2000" step="50"></div>
+          <div class="ctl"><label for="minTravel" title="Zones of movement before it counts as a throw rather than a hand">Min travel</label><input type="number" id="minTravel" value="2" min="1" max="8" step="1"></div>
+          <div class="ctl"><label for="minSpeed" title="Zone-to-zone speed expected of a thrown object">Min speed</label><input type="number" id="minSpeed" value="6" min="1" max="60" step="1"></div>
+        </div>
+        <p class="note" style="margin:8px 0 0">Range in mm, travel in zones, speed in zones/sec.</p>
+      </fieldset>
+    </div>
+
+    <div>
+      <div class="row">
+        <strong style="font-size:12.5px">Scoreboard</strong>
+        <span class="pill" id="scoreThrows">0 throws</span>
+        <span class="pill" id="scoreAcc">no labels yet</span>
+      </div>
+
+      <div class="tiles" style="margin-top:10px">
+        <div class="tile"><div class="k">Called in</div><div class="v"><span id="cntIn">0</span></div></div>
+        <div class="tile"><div class="k">Called miss</div><div class="v"><span id="cntMiss">0</span></div></div>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="playBtn" disabled>▶ Replay</button>
+        <input type="range" id="scrub" min="0" max="0" value="0" style="flex:1; width:auto" disabled>
+        <span class="pill" id="scrubLabel">no throw</span>
+      </div>
+      <div class="row">
+        <span class="sub">Was that right?</span>
+        <button id="labelIn" class="win" disabled>🏀 Went in</button>
+        <button id="labelMiss" class="lose" disabled>✖ Missed</button>
+        <button id="discardBtn" disabled>Discard</button>
+        <button id="liveBtn" disabled>Back to live</button>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <strong style="font-size:12.5px">Labelled throws</strong>
+        <span class="pill" id="trainCount">0 in · 0 miss</span>
+      </div>
+      <div class="throwlist" id="throwlist"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= FIELD OF VIEW ======================= -->
+<div class="card">
+  <h2>Field of view — distance per zone</h2>
+  <p class="note" id="gridNote">Looking out from the sensor. Brighter = closer.</p>
+  <div class="fov">
     <div id="grid"></div>
-
-    <div class="legend">
-      <span id="rampNear">0 mm</span>
-      <div class="ramp" id="rampBar"></div>
-      <span id="rampFar">2000 mm</span>
-    </div>
-    <div class="legend-row">
-      <span><span class="swatch" style="background:var(--surface-2)"></span>no valid target (status ≠ 5/9)</span>
-      <span><span class="swatch" style="background:var(--warning)"></span>closest valid zone</span>
-    </div>
-
-    <div id="tableView"></div>
-  </div>
-
-  <div>
-    <div class="card">
-      <h2>Timing — can it see a throw?</h2>
-      <p class="note">Delivered frame rate, measured at the host over the last 60 frames.</p>
-      <div class="tiles">
-        <div class="tile hero">
-          <div class="k">Measured rate</div>
-          <div class="v"><span id="fps">—</span> <span class="u">Hz</span></div>
-        </div>
-        <div class="tile hero">
-          <div class="k">Frame interval</div>
-          <div class="v"><span id="interval">—</span> <span class="u">ms</span></div>
-        </div>
-        <div class="tile">
-          <div class="k">Jitter (σ)</div>
-          <div class="v" style="font-size:17px"><span id="jitter">—</span> <span class="u">ms</span></div>
-        </div>
-        <div class="tile">
-          <div class="k">Object at 3 m/s crosses in</div>
-          <div class="v" style="font-size:17px"><span id="crossFrames">—</span> <span class="u">frames</span></div>
-        </div>
+    <div class="fov-side">
+      <div class="legend">
+        <span id="rampNear">0 mm</span>
+        <div class="ramp" id="rampBar"></div>
+        <span id="rampFar">2000 mm</span>
       </div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h2>Signal quality</h2>
-      <p class="note">How much of the grid is returning trustworthy range data right now.</p>
-      <div class="tiles">
-        <div class="tile">
-          <div class="k">Valid zones</div>
-          <div class="v" style="font-size:17px"><span id="validZones">—</span></div>
-        </div>
-        <div class="tile">
-          <div class="k">Closest valid</div>
-          <div class="v" style="font-size:17px"><span id="minDist">—</span> <span class="u">mm</span></div>
-        </div>
-        <div class="tile">
-          <div class="k">Peak signal</div>
-          <div class="v" style="font-size:17px"><span id="peakSig">—</span> <span class="u">kcps/spad</span></div>
-        </div>
-        <div class="tile">
-          <div class="k">Frames received</div>
-          <div class="v" style="font-size:17px"><span id="frameCount">—</span></div>
-        </div>
+      <div class="legend-row">
+        <span><span class="swatch" style="background:var(--surface-2)"></span>no valid target (status ≠ 5/9)</span>
+        <span><span class="swatch" style="background:var(--warning)"></span>closest valid zone</span>
+        <span><span class="swatch ring"></span>basket zone (counts as “in”)</span>
       </div>
+      <div id="tableView"></div>
     </div>
   </div>
+</div>
 
-  <div class="card full">
-    <h2>Closest valid distance over time</h2>
-    <p class="note">A throw through the field of view shows up here as a sharp dip. The dashed line is the capture trigger threshold.</p>
-    <div class="chart-wrap"><canvas id="chartDist" height="150"></canvas></div>
+<!-- ======================= CHARTS ======================= -->
+<div class="two-col">
+  <div class="card">
+    <h2>Closest valid distance</h2>
+    <p class="note">A throw shows up as a sharp dip. Dashed line = ring depth.</p>
+    <canvas id="chartDist" height="110"></canvas>
   </div>
-
-  <div class="card full">
+  <div class="card">
     <h2>Time between frames</h2>
-    <p class="note">The sensor's temporal resolution — the hard limit on how fast a projectile can be tracked. Flat is good; spikes are dropped or delayed frames.</p>
-    <div class="chart-wrap"><canvas id="chartInterval" height="120"></canvas></div>
+    <p class="note">The sensor's temporal resolution. Flat is good; spikes are late frames.</p>
+    <canvas id="chartInterval" height="110"></canvas>
   </div>
+</div>
 
-  <div class="card full">
-    <h2>Event capture</h2>
-    <p class="note">Arm the trigger, then throw something past the sensor. The frames around the event are held so you can step through them one at a time and see exactly how many frames the object appeared in.</p>
-    <div class="row">
-      <button id="armBtn">Arm trigger</button>
-      <span class="pill" id="armState">idle</span>
-      <div class="ctl">
-        <label for="thresh">Trigger below</label>
-        <input type="number" id="thresh" value="800" min="50" max="4000" step="50">
-        <span class="sub">mm</span>
-      </div>
-      <div class="ctl">
-        <label for="preFrames">Keep</label>
-        <input type="number" id="preFrames" value="20" min="1" max="200" step="1">
-        <span class="sub">frames before /</span>
-        <input type="number" id="postFrames" value="40" min="1" max="200" step="1">
-        <span class="sub">after</span>
-      </div>
-      <button id="saveBtn" title="Write the server-side ring buffer to captures/">Save history to disk</button>
-    </div>
-    <div class="row" style="margin-top:12px" id="scrubRow" hidden>
-      <button id="playBtn">▶ Replay</button>
-      <input type="range" id="scrub" min="0" max="0" value="0" style="flex:1; width:auto">
-      <span class="pill" id="scrubLabel">—</span>
-      <button id="liveBtn">Back to live</button>
+<!-- ======================= DIAGNOSTICS (bottom) ======================= -->
+<div class="two-col">
+  <div class="card">
+    <h2>Timing — can it see a throw?</h2>
+    <p class="note">Delivered frame rate, measured at the host over the last 60 frames.</p>
+    <div class="tiles">
+      <div class="tile hero"><div class="k">Measured rate</div><div class="v"><span id="fps">—</span> <span class="u">Hz</span></div></div>
+      <div class="tile hero"><div class="k">Frame interval</div><div class="v"><span id="interval">—</span> <span class="u">ms</span></div></div>
+      <div class="tile"><div class="k">Jitter (σ)</div><div class="v"><span id="jitter">—</span> <span class="u">ms</span></div></div>
+      <div class="tile"><div class="k">Object at 3 m/s crosses in</div><div class="v"><span id="crossFrames">—</span> <span class="u">frames</span></div></div>
     </div>
   </div>
-
+  <div class="card">
+    <h2>Signal quality</h2>
+    <p class="note">How much of the grid is returning trustworthy range data right now.</p>
+    <div class="tiles">
+      <div class="tile"><div class="k">Valid zones</div><div class="v"><span id="validZones">—</span></div></div>
+      <div class="tile"><div class="k">Closest valid</div><div class="v"><span id="minDist">—</span> <span class="u">mm</span></div></div>
+      <div class="tile"><div class="k">Peak signal</div><div class="v"><span id="peakSig">—</span> <span class="u">kcps/spad</span></div></div>
+      <div class="tile"><div class="k">Frames received</div><div class="v"><span id="frameCount">—</span></div></div>
+    </div>
+  </div>
 </div>
 
 <div class="log" id="log"></div>
@@ -333,27 +388,19 @@ th { color: var(--text-muted); font-weight: 500; }
 <script>
 "use strict";
 
-/* ---------- palette ------------------------------------------------------
- * One sequential blue ramp (steps 100→700), used for magnitude only. On the
- * light surface the near end is the DARK step; on the dark surface it is the
- * LIGHT step, so "close" is always the one that stands out from the page
- * rather than sinking into it. Same ramp, mode-appropriate direction. */
+/* ---------- palette ------------------------------------------------------ */
 const RAMP = ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7',
               '#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
 const isDark = () => document.documentElement.dataset.theme === 'dark' ||
                      (document.documentElement.dataset.theme !== 'light' && darkQuery.matches);
-
-/* proximity p in [0,1], 1 = closest */
 function rampColor(p) {
   p = Math.max(0, Math.min(1, p));
-  const i = Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1));
-  return RAMP[i];
+  return RAMP[Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1))];
 }
 function cssVar(n) { return getComputedStyle(document.body).getPropertyValue(n).trim(); }
 
-/* ST's target_status table (UM2884 §5.5 table 4). Only 5 and 9 are valid
- * ranges; everything else means the distance field must not be trusted. */
+/* ST's target_status table (UM2884 §5.5 table 4). Only 5 and 9 are valid. */
 const STATUS = {
   0:'Ranging data not updated', 1:'Signal rate too low on SPAD array',
   2:'Target phase', 3:'Sigma estimator too high', 4:'Target consistency failed',
@@ -366,25 +413,34 @@ const STATUS = {
 };
 const isValid = st => st === 5 || st === 9;
 
-/* ---------- state -------------------------------------------------------- */
 const S = {
-  frames: [],        // rolling client-side history
-  cap: 1500,
-  latest: null,
-  edge: 8,
-  hz: 15,
-  paused: false,
-  trail: true,
-  rangeMax: 2000,
-  cells: [],
-  arm: 'idle',       // idle | armed | fired
-  capture: null,     // {frames, need}
-  scrubIndex: null,
-  playing: false,
-  total: 0
+  frames: [], cap: 1500, latest: null, edge: 8, hz: 15,
+  paused: false, trail: true, rangeMax: 2000, cells: [],
+  scrubIndex: null, playing: false, total: 0, capture: null,
+  sound: true, voice: false, maskEdit: false,
+  throws: [], calledIn: 0, calledMiss: 0
 };
 
+/* Detector parameters. maskZones is keyed by grid edge because the zone
+ * numbering changes completely between 4x4 and 8x8 -- a mask calibrated at
+ * one resolution is meaningless at the other. */
+const DET = {
+  on: false,
+  trackRange: 1500,   // mm -- closer than this is a target worth tracking
+  ringDepth: 400,     // mm -- close enough to be passing through the opening
+  minTravel: 2,       // zones of cumulative movement to count as a throw
+  minSpeed: 6,        // zones/sec
+  endGap: 8,          // frames without a target that end a track
+  preRoll: 15, postRoll: 12,
+  maskZones: { 4: [13, 14], 8: [59, 60] }   // bottom-centre by default
+};
+
+/* Tracker state -- Missile Command style: a target is acquired, watched
+ * across frames, and judged by where its track terminated. */
+const T = { state: 'idle', track: null, gap: 0, lastEnd: 0 };
+
 const $ = id => document.getElementById(id);
+const maskFor = edge => DET.maskZones[edge] || [];
 
 /* ---------- grid --------------------------------------------------------- */
 function buildGrid(edge) {
@@ -398,89 +454,89 @@ function buildGrid(edge) {
     c.innerHTML = `<span class="zn">${i}</span><span class="dv">—</span>`;
     c.addEventListener('mousemove', e => showZoneTip(e, i));
     c.addEventListener('mouseleave', hideTip);
+    c.addEventListener('click', () => toggleMaskZone(i));
     g.appendChild(c);
     S.cells.push(c);
   }
   S.edge = edge;
+  paintMask();
+}
+
+function paintMask() {
+  const m = new Set(maskFor(S.edge));
+  S.cells.forEach((c, i) => c.classList.toggle('mask', m.has(i)));
+  $('maskCount').textContent = `${m.size} zone${m.size === 1 ? '' : 's'}`;
+}
+
+function toggleMaskZone(i) {
+  if (!S.maskEdit) return;
+  const list = maskFor(S.edge).slice();
+  const at = list.indexOf(i);
+  if (at >= 0) list.splice(at, 1); else list.push(i);
+  DET.maskZones[S.edge] = list.sort((a, b) => a - b);
+  paintMask();
+  saveConfig();
 }
 
 function renderFrame(f) {
   if (!f) return;
   if (f.edge !== S.edge) buildGrid(f.edge);
 
-  // Closest valid zone drives the trail marker and the peak outline.
-  let minD = Infinity, minZone = -1, valid = 0, peakSig = 0;
+  let minD = Infinity, mz = -1, valid = 0, peakSig = 0;
   for (let i = 0; i < f.d.length; i++) {
-    if (isValid(f.s[i])) {
-      valid++;
-      if (f.d[i] < minD) { minD = f.d[i]; minZone = i; }
-    }
+    if (isValid(f.s[i])) { valid++; if (f.d[i] < minD) { minD = f.d[i]; mz = i; } }
     if (f.sig[i] > peakSig) peakSig = f.sig[i];
   }
 
   for (let i = 0; i < S.cells.length; i++) {
-    const cell = S.cells[i];
-    const d = f.d[i], st = f.s[i];
+    const cell = S.cells[i], d = f.d[i], st = f.s[i];
     const dv = cell.querySelector('.dv');
     if (!isValid(st)) {
       cell.classList.add('invalid');
-      cell.style.backgroundColor = '';
+      cell.style.backgroundColor = ''; cell.style.color = '';
       dv.textContent = '·';
-      cell.style.color = '';
     } else {
       cell.classList.remove('invalid');
-      const p = 1 - Math.min(1, d / S.rangeMax);   // proximity
+      const p = 1 - Math.min(1, d / S.rangeMax);
       cell.style.backgroundColor = rampColor(p);
       dv.textContent = d;
-      // Ink stays legible against whichever end of the ramp the cell landed on.
-      const idx = Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1));
-      const deep = isDark() ? idx > 6 : idx > 6;
-      cell.style.color = deep ? '#ffffff' : '#0b0b0b';
+      cell.style.color = Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1)) > 6 ? '#fff' : '#0b0b0b';
     }
-    cell.classList.toggle('peak', i === minZone);
+    cell.classList.toggle('peak', i === mz);
   }
 
-  drawTrail(minZone);
-
+  drawTrail(mz);
   $('validZones').textContent = `${valid}/${f.d.length}`;
-  $('minDist').textContent = minZone >= 0 ? minD : '—';
+  $('minDist').textContent = mz >= 0 ? minD : '—';
   $('peakSig').textContent = peakSig;
   $('frameCount').textContent = S.total;
-  if (document.getElementById('tableView').style.display === 'block') renderTable(f);
+  if ($('tableView').style.display === 'block') renderTable(f);
 }
 
-/* Fading markers showing the closest zone over the last few frames -- the
- * cheapest way to see a trajectory across the grid rather than a single
- * snapshot. */
 function drawTrail(currentZone) {
   document.querySelectorAll('.trail').forEach(t => t.remove());
   if (!S.trail) return;
-  const hist = S.frames.slice(-6, -1);
-  hist.forEach((f, k) => {
+  S.frames.slice(-6, -1).forEach((f, k) => {
     if (f.edge !== S.edge) return;
-    let md = Infinity, mz = -1;
-    for (let i = 0; i < f.d.length; i++) {
-      if (isValid(f.s[i]) && f.d[i] < md) { md = f.d[i]; mz = i; }
-    }
-    if (mz < 0 || mz === currentZone || !S.cells[mz]) return;
+    const z = minZone(f);
+    if (z < 0 || z === currentZone || !S.cells[z]) return;
     const t = document.createElement('div');
     t.className = 'trail';
     t.style.opacity = (0.14 + 0.13 * k).toFixed(2);
-    S.cells[mz].appendChild(t);
+    S.cells[z].appendChild(t);
   });
 }
 
 function renderTable(f) {
   const edge = f.edge;
-  let h = '<table><tr><th></th>';
+  let h = '<table class="zones"><tr><th></th>';
   for (let c = 0; c < edge; c++) h += `<th>c${c}</th>`;
   h += '</tr>';
   for (let r = 0; r < edge; r++) {
     h += `<tr><th>r${r}</th>`;
     for (let c = 0; c < edge; c++) {
       const i = r * edge + c;
-      h += isValid(f.s[i]) ? `<td>${f.d[i]}</td>`
-                           : `<td style="color:var(--text-muted)">s${f.s[i]}</td>`;
+      h += isValid(f.s[i]) ? `<td>${f.d[i]}</td>` : `<td style="color:var(--text-muted)">s${f.s[i]}</td>`;
     }
     h += '</tr>';
   }
@@ -490,8 +546,7 @@ function renderTable(f) {
 /* ---------- tooltips ----------------------------------------------------- */
 const tip = $('tip');
 function showTip(e, html) {
-  tip.innerHTML = html;
-  tip.style.opacity = 1;
+  tip.innerHTML = html; tip.style.opacity = 1;
   const pad = 14;
   let x = e.clientX + pad, y = e.clientY + pad;
   const r = tip.getBoundingClientRect();
@@ -500,15 +555,40 @@ function showTip(e, html) {
   tip.style.left = x + 'px'; tip.style.top = y + 'px';
 }
 function hideTip() { tip.style.opacity = 0; }
-
 function showZoneTip(e, i) {
-  const f = viewFrame();
-  if (!f) return;
+  const f = viewFrame(); if (!f) return;
   const edge = f.edge;
-  showTip(e, `<div class="t-h">Zone ${i} &nbsp;<span style="color:var(--text-muted)">r${Math.floor(i/edge)} c${i%edge}</span></div>
+  const inMask = maskFor(edge).includes(i);
+  showTip(e, `<div class="t-h">Zone ${i} &nbsp;<span style="color:var(--text-muted)">r${Math.floor(i/edge)} c${i%edge}</span>${inMask ? ' &nbsp;🏀' : ''}</div>
     <div class="t-r">Distance: <b style="color:var(--text-primary)">${isValid(f.s[i]) ? f.d[i] + ' mm' : '—'}</b></div>
     <div class="t-r">Status ${f.s[i]}: ${STATUS[f.s[i]] || 'unknown'}</div>
-    <div class="t-r">Signal: ${f.sig[i]} kcps/spad</div>`);
+    <div class="t-r">Signal: ${f.sig[i]} kcps/spad</div>
+    ${S.maskEdit ? '<div class="t-r"><b>click to toggle basket zone</b></div>' : ''}`);
+}
+
+/* ---------- per-frame helpers ------------------------------------------- */
+function minValid(f) {
+  let m = Infinity;
+  for (let i = 0; i < f.d.length; i++) if (isValid(f.s[i]) && f.d[i] < m) m = f.d[i];
+  return isFinite(m) ? m : null;
+}
+function minZone(f) {
+  let m = Infinity, z = -1;
+  for (let i = 0; i < f.d.length; i++) if (isValid(f.s[i]) && f.d[i] < m) { m = f.d[i]; z = i; }
+  return z;
+}
+function intervals(frames) {
+  const out = [];
+  for (let i = 1; i < frames.length; i++) out.push((frames[i].rx - frames[i-1].rx) * 1000);
+  return out;
+}
+/* Chebyshev distance in grid coordinates: a diagonal hop is one zone of
+ * travel, same as an orthogonal one. */
+function zoneStep(a, b, edge) {
+  if (a < 0 || b < 0) return 0;
+  const dr = Math.abs(Math.floor(a / edge) - Math.floor(b / edge));
+  const dc = Math.abs((a % edge) - (b % edge));
+  return Math.max(dr, dc);
 }
 
 /* ---------- charts ------------------------------------------------------- */
@@ -528,26 +608,23 @@ function fitCanvas(cv) {
   return { ctx, w, h };
 }
 
-/* Shared line-chart renderer: recessive grid, 2px stroke, single series, so
- * no legend is needed -- the card title names the measure. */
 function drawSeries(cv, values, opts) {
   const { ctx, w, h } = fitCanvas(cv);
-  const padL = 44, padR = 8, padT = 10, padB = 18;
+  const padL = 42, padR = 8, padT = 8, padB = 16;
   ctx.clearRect(0, 0, w, h);
   if (!values.length) return;
-
   const finite = values.filter(v => v != null && isFinite(v));
   if (!finite.length) return;
+
   let lo = opts.min != null ? opts.min : Math.min(...finite);
   let hi = opts.max != null ? opts.max : Math.max(...finite);
-  if (hi - lo < 1e-6) { hi = lo + 1; }
+  if (hi - lo < 1e-6) hi = lo + 1;
   const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
   if (opts.floorZero && lo < 0) lo = 0;
 
   const X = i => padL + (i / Math.max(1, values.length - 1)) * (w - padL - padR);
   const Y = v => padT + (1 - (v - lo) / (hi - lo)) * (h - padT - padB);
 
-  // gridlines + y labels
   ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
   ctx.fillStyle = cssVar('--text-muted');
   ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
@@ -558,7 +635,6 @@ function drawSeries(cv, values, opts) {
     ctx.fillText(Math.round(v).toLocaleString(), padL - 6, y);
   }
 
-  // threshold marker (capture trigger)
   if (opts.threshold != null && opts.threshold > lo && opts.threshold < hi) {
     ctx.save();
     ctx.setLineDash([4, 4]); ctx.strokeStyle = cssVar('--warning'); ctx.lineWidth = 1.5;
@@ -567,7 +643,6 @@ function drawSeries(cv, values, opts) {
     ctx.restore();
   }
 
-  // series -- gaps where there is no valid reading, rather than a fake join
   ctx.strokeStyle = cssVar('--series-1'); ctx.lineWidth = 2;
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.beginPath();
@@ -579,19 +654,11 @@ function drawSeries(cv, values, opts) {
   });
   ctx.stroke();
 
-  // scrub position
-  if (opts.markIndex != null && opts.markIndex >= 0 && opts.markIndex < values.length) {
-    const x = Math.round(X(opts.markIndex)) + .5;
-    ctx.strokeStyle = cssVar('--warning'); ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke();
-  }
-
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = cssVar('--text-muted');
-  ctx.fillText(opts.unit || '', padL, h - 5);
+  ctx.fillText(opts.unit || '', padL, h - 4);
   ctx.textAlign = 'right';
-  ctx.fillText(`${values.length} frames`, w - padR, h - 5);
-
+  ctx.fillText(`${values.length} frames`, w - padR, h - 4);
   cv._chart = { values, X, Y, lo, hi, padL, padR, w, opts };
 }
 
@@ -599,8 +666,7 @@ function attachCrosshair(cv, fmt) {
   cv.addEventListener('mousemove', e => {
     const st = cv._chart; if (!st) return;
     const r = cv.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const frac = (x - st.padL) / (st.w - st.padL - st.padR);
+    const frac = (e.clientX - r.left - st.padL) / (st.w - st.padL - st.padR);
     const i = Math.round(frac * (st.values.length - 1));
     if (i < 0 || i >= st.values.length) { hideTip(); return; }
     showTip(e, fmt(i, st.values[i]));
@@ -608,117 +674,339 @@ function attachCrosshair(cv, fmt) {
   cv.addEventListener('mouseleave', hideTip);
 }
 
-/* ---------- derived series ---------------------------------------------- */
-function minValid(f) {
-  let m = Infinity;
-  for (let i = 0; i < f.d.length; i++) if (isValid(f.s[i]) && f.d[i] < m) m = f.d[i];
-  return isFinite(m) ? m : null;
-}
-function intervals(frames) {
-  const out = [];
-  for (let i = 1; i < frames.length; i++) out.push((frames[i].rx - frames[i-1].rx) * 1000);
-  return out;
-}
-
 function updateCharts() {
   const win = S.frames.slice(-240);
-  const dists = win.map(minValid);
-  const iv = intervals(win);
-
-  let markIdx = null;
-  if (S.scrubIndex != null && S.capture) markIdx = null; // scrub marks the capture, not the live window
-
-  drawSeries($('chartDist'), dists, {
-    unit: 'mm', floorZero: true,
-    threshold: parseFloat($('thresh').value),
-    markIndex: markIdx
+  drawSeries($('chartDist'), win.map(minValid), {
+    unit: 'mm', floorZero: true, threshold: DET.ringDepth
   });
-  drawSeries($('chartInterval'), iv, { unit: 'ms between frames', min: 0 });
+  drawSeries($('chartInterval'), intervals(win), { unit: 'ms', min: 0 });
 }
 
 function updateStats() {
-  const win = S.frames.slice(-60);
-  const iv = intervals(win);
+  const iv = intervals(S.frames.slice(-60));
   if (iv.length < 2) return;
   const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
   const sd = Math.sqrt(iv.reduce((a, b) => a + (b - mean) ** 2, 0) / iv.length);
   $('fps').textContent = (1000 / mean).toFixed(1);
   $('interval').textContent = mean.toFixed(1);
   $('jitter').textContent = sd.toFixed(1);
-
-  /* How many frames a 3 m/s object gets while crossing the field. At 1 m the
-   * 45-degree FoV spans ~0.83 m, so crossing takes ~830/3000 s ~= 276 ms.
-   * This is the number that decides whether classification is even possible. */
-  const crossingMs = 276;
-  $('crossFrames').textContent = (crossingMs / mean).toFixed(1);
+  /* At 1m the ~45-degree FoV spans ~0.83m, so a 3 m/s object crosses in
+   * ~276ms -- the number that decides whether tracking is possible at all. */
+  $('crossFrames').textContent = (276 / mean).toFixed(1);
 }
 
-/* ---------- event capture ------------------------------------------------ */
-function onNewFrame(f) {
-  if (S.capture && S.capture.need > 0) {
-    S.capture.frames.push(f);
-    S.capture.need--;
-    if (S.capture.need === 0) {
-      S.arm = 'fired';
-      $('armState').textContent = `captured ${S.capture.frames.length} frames`;
-      $('armState').className = 'pill fired';
-      $('armBtn').classList.remove('on');
-      openScrubber();
-    }
+/* ---------- audio --------------------------------------------------------
+ * Synthesised rather than shipped as files: no binary assets, nothing to
+ * fetch, page stays self-contained. AudioContext must be created/resumed from
+ * a user gesture, which the detector and label buttons provide. */
+let actx = null;
+function audio() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+  return actx;
+}
+function tone(freq, at, dur, type, peak, glideTo) {
+  const ctx = audio();
+  const osc = ctx.createOscillator(), g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, at);
+  if (glideTo) osc.frequency.exponentialRampToValueAtTime(glideTo, at + dur);
+  // Short attack, exponential decay -- a linear release sounds like a click.
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(peak, at + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(at); osc.stop(at + dur + 0.02);
+}
+
+/* 1. Target acquired -- fires mid-flight, the moment something is confirmed
+ *    to be travelling across the grid. Deliberately short and electronic so
+ *    it never masks the outcome sound that follows a moment later. */
+function playInbound() {
+  if (!S.sound) return;
+  const t = audio().currentTime;
+  tone(1174.7, t,        0.07, 'square', 0.16);
+  tone(1567.9, t + 0.07, 0.09, 'square', 0.16);
+  speak('Incoming');
+}
+/* 2. Through the basket zones. */
+function playWin() {
+  if (!S.sound) return;
+  const t = audio().currentTime;
+  [523.25, 659.25, 783.99, 1046.50].forEach((f, i) =>
+    tone(f, t + i * 0.075, 0.34, 'triangle', 0.30));
+  tone(2093.0, t + 0.225, 0.42, 'sine', 0.10);
+  speak('Shot caller!');
+}
+/* 3. Tracked, but it did not go in. */
+function playMiss() {
+  if (!S.sound) return;
+  const t = audio().currentTime;
+  tone(233.08, t,        0.20, 'sawtooth', 0.20);
+  tone(207.65, t + 0.19, 0.20, 'sawtooth', 0.20);
+  tone(196.00, t + 0.38, 0.22, 'sawtooth', 0.20);
+  tone(185.00, t + 0.58, 0.55, 'sawtooth', 0.22, 110);
+  speak('Miss');
+}
+function speak(text) {
+  if (!S.voice || !window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.1; u.volume = 0.9;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- the tracker --------------------------------------------------
+ * Three questions, in order:
+ *   1. Is something there?            (closer than trackRange)
+ *   2. Is it actually being thrown?   (travels >= minTravel zones at >= minSpeed)
+ *   3. Where did the track end?       (through the basket zones, or not)
+ * Only tracks that pass (2) produce a verdict, which is what keeps a hand
+ * reaching into frame from being called a shot. */
+function trackerTick(f) {
+  if (!DET.on) return;
+
+  const d = minValid(f);
+  const z = minZone(f);
+  const hasTarget = d != null && d < DET.trackRange;
+
+  if (!hasTarget) {
+    if (T.state === 'tracking' && ++T.gap >= DET.endGap) endTrack();
     return;
   }
-  if (S.arm === 'armed') {
-    const m = minValid(f);
-    const th = parseFloat($('thresh').value);
-    if (m != null && m < th) {
-      const pre = Math.max(1, parseInt($('preFrames').value, 10) || 20);
-      const post = Math.max(1, parseInt($('postFrames').value, 10) || 40);
-      S.capture = { frames: S.frames.slice(-pre).concat([f]), need: post };
-      $('armState').textContent = `triggered at ${m} mm — recording…`;
-    }
+
+  if (T.state === 'idle') {
+    // Ignore anything arriving during the refractory gap after a throw, so a
+    // bounce or the object settling is not counted as a second shot.
+    if (performance.now() < T.lastEnd + 1200) return;
+    T.state = 'tracking';
+    T.gap = 0;
+    T.track = {
+      frames: S.frames.slice(-DET.preRoll).concat([f]),
+      zones: [z], travel: 0, t0: f.t, tLast: f.t,
+      inbound: false, hitMask: false, minDist: d, minInMask: Infinity,
+      peakSpeed: 0
+    };
+    return;
+  }
+
+  const tr = T.track;
+  T.gap = 0;
+  tr.frames.push(f);
+  const prevZ = tr.zones[tr.zones.length - 1];
+  tr.travel += zoneStep(prevZ, z, f.edge);
+  tr.zones.push(z);
+  tr.tLast = f.t;
+  if (d < tr.minDist) tr.minDist = d;
+
+  // Did it pass through the opening? Both conditions must hold in the same
+  // frame: the right zone AND close enough to be in the ring, not a distant
+  // object that happens to line up with the basket zones.
+  if (maskFor(f.edge).includes(z) && d < DET.ringDepth) {
+    tr.hitMask = true;
+    if (d < tr.minInMask) tr.minInMask = d;
+  }
+
+  const elapsed = Math.max(1, tr.tLast - tr.t0) / 1000;
+  const speed = tr.travel / elapsed;
+  if (speed > tr.peakSpeed) tr.peakSpeed = speed;
+
+  if (!tr.inbound && tr.travel >= DET.minTravel && speed >= DET.minSpeed) {
+    tr.inbound = true;
+    tr.inboundAt = f.t;
+    playInbound();
+    showVerdict('inbound', tr);
+    appendLog(`inbound: ${tr.travel} zones in ${(elapsed*1000).toFixed(0)}ms (${speed.toFixed(1)} zones/s)`);
   }
 }
 
+function endTrack() {
+  const tr = T.track;
+  T.state = 'idle'; T.track = null; T.gap = 0;
+  if (!tr) return;
+
+  if (!tr.inbound) return;   // too slow / too little movement to be a throw
+
+  T.lastEnd = performance.now();
+  const verdict = tr.hitMask ? 'in' : 'miss';
+  tr.verdict = verdict;
+
+  if (verdict === 'in') { S.calledIn++; playWin(); } else { S.calledMiss++; playMiss(); }
+  $('cntIn').textContent = S.calledIn;
+  $('cntMiss').textContent = S.calledMiss;
+
+  S.capture = tr;
+  showVerdict(verdict, tr);
+  openScrubber();
+  appendLog(`called ${verdict.toUpperCase()} — closest ${Math.round(tr.minDist)}mm, ` +
+            `${tr.hitMask ? 'through basket zone at ' + Math.round(tr.minInMask) + 'mm' : 'never entered a basket zone'}`);
+  renderScore();
+}
+
+function showVerdict(kind, tr) {
+  const el = $('verdict'), w = $('verdictWord'), m = $('verdictMeta');
+  el.className = 'verdict ' + kind;
+  if (kind === 'inbound') {
+    w.textContent = 'INBOUND →';
+    m.textContent = `tracking: ${tr.travel} zones at ${tr.peakSpeed.toFixed(1)} zones/s`;
+  } else if (kind === 'in') {
+    w.textContent = 'IN! 🏀';
+    m.textContent = `through basket zone at ${Math.round(tr.minInMask)} mm · ` +
+                    `${tr.frames.length} frames · peak ${tr.peakSpeed.toFixed(1)} zones/s`;
+  } else if (kind === 'miss') {
+    w.textContent = 'MISS ✖';
+    m.textContent = `closest ${Math.round(tr.minDist)} mm, never through a basket zone · ` +
+                    `${tr.frames.length} frames`;
+  } else {
+    w.textContent = DET.on ? 'Watching…' : 'Detector off';
+    m.textContent = DET.on
+      ? `Waiting for something to cross the grid at ${DET.minSpeed}+ zones/s.`
+      : 'Turn the detector on, set the basket zones, and throw something.';
+  }
+}
+
+/* ---------- replay & labelling ------------------------------------------ */
 function openScrubber() {
   const n = S.capture.frames.length;
-  $('scrubRow').hidden = false;
   $('scrub').max = String(n - 1);
   $('scrub').value = '0';
+  $('scrub').disabled = false;
+  ['playBtn','labelIn','labelMiss','discardBtn','liveBtn'].forEach(i => $(i).disabled = false);
   S.scrubIndex = 0;
   showScrub();
 }
 function showScrub() {
   if (!S.capture) return;
-  const i = S.scrubIndex;
-  const f = S.capture.frames[i];
-  const t0 = S.capture.frames[0].t;
+  const i = S.scrubIndex, f = S.capture.frames[i], t0 = S.capture.frames[0].t;
   $('scrubLabel').textContent = `frame ${i + 1}/${S.capture.frames.length} · +${f.t - t0} ms`;
   renderFrame(f);
 }
 function viewFrame() {
   return (S.scrubIndex != null && S.capture) ? S.capture.frames[S.scrubIndex] : S.latest;
 }
+function backToLive() {
+  S.scrubIndex = null; S.playing = false; S.capture = null;
+  $('playBtn').textContent = '▶ Replay';
+  $('scrub').disabled = true;
+  $('scrubLabel').textContent = 'no throw';
+  ['playBtn','labelIn','labelMiss','discardBtn','liveBtn'].forEach(i => $(i).disabled = true);
+  showVerdict(null);
+}
+
+async function labelThrow(label) {
+  if (!S.capture) return;
+  const tr = S.capture;
+  const payload = {
+    label, verdict: tr.verdict,
+    edge: tr.frames[0].edge, hz: tr.frames[0].hz,
+    stats: {
+      minDist: tr.minDist, minInMask: isFinite(tr.minInMask) ? tr.minInMask : null,
+      travel: tr.travel, peakSpeed: tr.peakSpeed,
+      hitMask: tr.hitMask, frames: tr.frames.length
+    },
+    mask: maskFor(tr.frames[0].edge),
+    det: { trackRange: DET.trackRange, ringDepth: DET.ringDepth,
+           minTravel: DET.minTravel, minSpeed: DET.minSpeed },
+    frames: tr.frames
+  };
+  const r = await fetch('/throws/save', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const j = await r.json();
+  appendLog(`labelled ${label.toUpperCase()} (detector said ${String(tr.verdict).toUpperCase()}) -> ${j.id}`);
+  await loadThrows();
+  backToLive();
+}
+
+async function loadThrows() {
+  try {
+    S.throws = (await (await fetch('/throws/list')).json()).throws || [];
+  } catch (e) { S.throws = []; }
+  renderScore();
+}
+
+function renderScore() {
+  const ins = S.throws.filter(t => t.label === 'in').length;
+  const misses = S.throws.filter(t => t.label === 'miss').length;
+  $('trainCount').textContent = `${ins} in · ${misses} miss`;
+  $('scoreThrows').textContent = `${S.calledIn + S.calledMiss} throws this session`;
+
+  // Accuracy of the rules against ground truth -- the only honest measure of
+  // whether the basket zones and thresholds are set correctly.
+  const scored = S.throws.filter(t => t.verdict === 'in' || t.verdict === 'miss');
+  if (!scored.length) {
+    $('scoreAcc').textContent = 'no labels yet';
+    $('scoreAcc').className = 'pill';
+  } else {
+    const right = scored.filter(t => t.verdict === t.label).length;
+    const pct = Math.round(100 * right / scored.length);
+    $('scoreAcc').textContent = `${right}/${scored.length} correct (${pct}%)`;
+    $('scoreAcc').className = 'pill ' + (pct >= 80 ? 'ok' : 'bad');
+  }
+
+  const list = $('throwlist');
+  list.innerHTML = '';
+  S.throws.slice().reverse().forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'tr';
+    const st = t.stats || {};
+    const wrong = (t.verdict && t.verdict !== t.label)
+      ? ` <span class="wrongmark">detector said ${t.verdict}</span>` : '';
+    row.innerHTML = `<span class="tag ${t.label}">${t.label === 'in' ? 'IN' : 'MISS'}</span>
+      <span style="color:var(--text-secondary)">${Math.round(st.minDist ?? 0)} mm · ${st.travel ?? 0} zones · ${(st.peakSpeed ?? 0).toFixed(1)} z/s${wrong}</span>`;
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '✕'; del.title = 'delete this example';
+    del.onclick = async () => {
+      await fetch('/throws/delete?id=' + encodeURIComponent(t.id));
+      await loadThrows();
+    };
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+/* ---------- config persistence ------------------------------------------ */
+let saveTimer = null;
+function saveConfig() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch('/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        maskZones: DET.maskZones, trackRange: DET.trackRange,
+        ringDepth: DET.ringDepth, minTravel: DET.minTravel, minSpeed: DET.minSpeed
+      })
+    }).catch(() => {});
+  }, 400);
+}
+async function loadConfig() {
+  try {
+    const c = await (await fetch('/config')).json();
+    if (c.maskZones) DET.maskZones = c.maskZones;
+    ['trackRange','ringDepth','minTravel','minSpeed'].forEach(k => {
+      if (typeof c[k] === 'number') DET[k] = c[k];
+    });
+  } catch (e) { /* first run, no config yet */ }
+  $('trackRange').value = DET.trackRange;
+  $('ringDepth').value = DET.ringDepth;
+  $('minTravel').value = DET.minTravel;
+  $('minSpeed').value = DET.minSpeed;
+  paintMask();
+}
 
 /* ---------- transport ---------------------------------------------------- */
 function connect() {
   const es = new EventSource('/events');
-  es.onopen = () => {
-    $('connDot').className = 'dot live';
-    $('connText').textContent = 'streaming';
-  };
-  es.onerror = () => {
-    $('connDot').className = 'dot dead';
-    $('connText').textContent = 'disconnected — is viz_server.py running?';
-  };
+  es.onopen = () => { $('connDot').className = 'dot live'; $('connText').textContent = 'streaming'; };
+  es.onerror = () => { $('connDot').className = 'dot dead'; $('connText').textContent = 'disconnected — is viz_server.py running?'; };
   es.onmessage = ev => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'frame') {
-      const f = msg.frame;
       S.total++;
-      S.frames.push(f);
+      S.frames.push(msg.frame);
       if (S.frames.length > S.cap) S.frames.splice(0, S.frames.length - S.cap);
-      S.latest = f;
-      onNewFrame(f);
+      S.latest = msg.frame;
+      trackerTick(msg.frame);
     } else if (msg.type === 'config') {
       const c = msg.config;
       S.hz = parseInt(c.hz, 10);
@@ -726,7 +1014,7 @@ function connect() {
       $('res8').classList.toggle('on', c.res === '8');
       $('res4').classList.toggle('on', c.res === '4');
       $('gridNote').textContent =
-        `${c.res}×${c.res} zones · requested ${c.hz} Hz (sensor max ${c.max_hz} Hz at this resolution) · ${c.mode === 'cont' ? 'continuous' : 'autonomous'} mode. Brighter = closer.`;
+        `${c.res}×${c.res} zones · requested ${c.hz} Hz (sensor max ${c.max_hz} Hz here) · ${c.mode === 'cont' ? 'continuous' : 'autonomous'} mode. Brighter = closer.`;
       appendLog(`config: ${c.res}x${c.res} @ ${c.hz}Hz, mode=${c.mode}`);
     } else if (msg.type === 'log') {
       appendLog(msg.log.text);
@@ -740,17 +1028,11 @@ function appendLog(t) {
 }
 const cmd = c => fetch('/cmd?c=' + encodeURIComponent(c));
 
-/* ---------- render loop --------------------------------------------------
- * Decoupled from arrival: frames land at up to 60Hz, but the DOM only needs
- * repainting at display rate, and the charts far less often than that. */
+/* ---------- render loop -------------------------------------------------- */
 let lastChart = 0;
 function loop(ts) {
   if (!S.paused && S.scrubIndex == null && S.latest) renderFrame(S.latest);
-  if (ts - lastChart > 120) {
-    updateCharts();
-    updateStats();
-    lastChart = ts;
-  }
+  if (ts - lastChart > 120) { updateCharts(); updateStats(); lastChart = ts; }
   requestAnimationFrame(loop);
 }
 
@@ -763,6 +1045,10 @@ $('res4').onclick = () => cmd('4');
 $('hzUp').onclick = () => cmd('+');
 $('hzDown').onclick = () => cmd('-');
 $('hzMax').onclick = () => cmd('M');
+/* One click to the settings that actually track a throw: 4x4 gives 60Hz
+ * instead of 15Hz, so an object crossing the opening in ~276ms is seen in
+ * ~17 frames rather than ~4. Spatial detail is worth trading for that. */
+$('throwMode').onclick = async () => { await cmd('4'); setTimeout(() => cmd('M'), 400); };
 
 $('rangeMax').oninput = e => {
   S.rangeMax = +e.target.value;
@@ -770,10 +1056,7 @@ $('rangeMax').oninput = e => {
   $('rampFar').textContent = `${S.rangeMax} mm`;
   paintRampLegend();
 };
-$('trailBtn').onclick = e => {
-  S.trail = !S.trail;
-  e.target.classList.toggle('on', S.trail);
-};
+$('trailBtn').onclick = e => { S.trail = !S.trail; e.target.classList.toggle('on', S.trail); };
 $('tableBtn').onclick = e => {
   const tv = $('tableView');
   const on = tv.style.display !== 'block';
@@ -787,27 +1070,40 @@ $('pauseBtn').onclick = e => {
   e.target.textContent = S.paused ? 'Resume' : 'Pause';
 };
 
-$('armBtn').onclick = e => {
-  if (S.arm === 'armed') {
-    S.arm = 'idle'; S.capture = null;
-    $('armState').textContent = 'idle'; $('armState').className = 'pill';
-    e.target.classList.remove('on');
-  } else {
-    S.arm = 'armed'; S.capture = null; S.scrubIndex = null;
-    $('scrubRow').hidden = true;
-    $('armState').textContent = 'armed — waiting for something to come close';
-    $('armState').className = 'pill armed';
-    e.target.classList.add('on');
-  }
+$('detBtn').onclick = e => {
+  DET.on = !DET.on;
+  audio();   // unlock audio while we have a user gesture
+  e.target.classList.toggle('on', DET.on);
+  e.target.textContent = DET.on ? 'Stop detector' : 'Start detector';
+  $('detState').textContent = DET.on ? 'watching' : 'idle';
+  $('detState').className = 'pill' + (DET.on ? ' armed' : '');
+  T.state = 'idle'; T.track = null;
+  showVerdict(null);
 };
+$('maskBtn').onclick = e => {
+  S.maskEdit = !S.maskEdit;
+  e.target.classList.toggle('on', S.maskEdit);
+  e.target.textContent = S.maskEdit ? 'Done setting zones' : 'Set basket zones';
+  $('grid').classList.toggle('editing', S.maskEdit);
+  if (S.maskEdit) $('grid').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+$('maskClear').onclick = () => { DET.maskZones[S.edge] = []; paintMask(); saveConfig(); };
+
+[['trackRange','trackRange'],['ringDepth','ringDepth'],
+ ['minTravel','minTravel'],['minSpeed','minSpeed']].forEach(([id, key]) => {
+  $(id).oninput = e => {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v)) { DET[key] = v; saveConfig(); }
+  };
+});
+
+$('soundBtn').onclick = e => { S.sound = !S.sound; e.target.classList.toggle('on', S.sound); };
+$('voiceBtn').onclick = e => { S.voice = !S.voice; e.target.classList.toggle('on', S.voice); };
+$('testTrack').onclick = () => { audio(); const s = S.sound; S.sound = true; playInbound(); S.sound = s; };
+$('testWin').onclick   = () => { audio(); const s = S.sound; S.sound = true; playWin();     S.sound = s; };
+$('testMiss').onclick  = () => { audio(); const s = S.sound; S.sound = true; playMiss();    S.sound = s; };
+
 $('scrub').oninput = e => { S.scrubIndex = +e.target.value; showScrub(); };
-$('liveBtn').onclick = () => {
-  S.scrubIndex = null; S.playing = false;
-  $('scrubRow').hidden = true;
-  S.arm = 'idle'; S.capture = null;
-  $('armState').textContent = 'idle'; $('armState').className = 'pill';
-  $('armBtn').classList.remove('on');
-};
 $('playBtn').onclick = () => {
   if (!S.capture) return;
   S.playing = !S.playing;
@@ -819,20 +1115,19 @@ function replayStep() {
   S.scrubIndex = (S.scrubIndex + 1) % S.capture.frames.length;
   $('scrub').value = String(S.scrubIndex);
   showScrub();
-  setTimeout(replayStep, 220);   // deliberately slower than real time
+  setTimeout(replayStep, 200);   // deliberately slower than real time
 }
-$('saveBtn').onclick = async () => {
-  const r = await fetch('/save');
-  const j = await r.json();
-  appendLog(`saved ${j.frames} frames -> ${j.path}`);
-};
+$('labelIn').onclick = () => labelThrow('in');
+$('labelMiss').onclick = () => labelThrow('miss');
+$('discardBtn').onclick = () => backToLive();
+$('liveBtn').onclick = () => backToLive();
 
 function paintRampLegend() {
   const stops = [];
   for (let k = 0; k <= 10; k++) stops.push(rampColor(1 - k / 10));
   $('rampBar').style.background = `linear-gradient(to right, ${stops.join(',')})`;
 }
-darkQuery.addEventListener('change', () => { paintRampLegend(); });
+darkQuery.addEventListener('change', paintRampLegend);
 
 attachCrosshair($('chartDist'), (i, v) =>
   `<div class="t-h">Closest valid zone</div><div class="t-r">${v == null ? 'no valid target' : v + ' mm'}</div>`);
@@ -840,6 +1135,8 @@ attachCrosshair($('chartInterval'), (i, v) =>
   `<div class="t-h">Frame interval</div><div class="t-r">${v == null ? '—' : v.toFixed(1) + ' ms (' + (1000/v).toFixed(1) + ' Hz)'}</div>`);
 
 addEventListener('resize', updateCharts);
+loadConfig();
+loadThrows();
 connect();
 requestAnimationFrame(loop);
 </script>
