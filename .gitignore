@@ -1,0 +1,8 @@
+build/
+.metadata/
+.settings/
+.DS_Store
+*.o
+*.elf
+*.bin
+*.map
