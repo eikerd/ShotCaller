@@ -1,4 +1,5 @@
 build/
+captures/
 .metadata/
 .settings/
 .DS_Store

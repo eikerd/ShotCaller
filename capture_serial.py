@@ -18,7 +18,7 @@ import time
 import serial
 
 PORT = os.environ.get("SHOTCALLER_PORT", "/dev/cu.usbmodem2244103")
-BAUD = 115200
+BAUD = int(os.environ.get("SHOTCALLER_BAUD", "921600"))
 
 def main():
     duration = float(sys.argv[1]) if len(sys.argv) > 1 else 5.0

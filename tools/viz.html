@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShotCaller — ToF Scope</title>
+<style>
+/* Palette roles. Light is the base; dark is a selected set of steps from the
+   same ramps, not an automatic inversion. */
+:root {
+  color-scheme: light;
+  --plane:        #f9f9f7;
+  --surface-1:    #fcfcfb;
+  --surface-2:    #f0efec;
+  --text-primary: #0b0b0b;
+  --text-secondary:#52514e;
+  --text-muted:   #898781;
+  --grid:         #e1e0d9;
+  --axis:         #c3c2b7;
+  --series-1:     #2a78d6;
+  --good:         #0ca30c;
+  --warning:      #fab219;
+  --critical:     #d03b3b;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:        #0d0d0d;
+    --surface-1:    #1a1a19;
+    --surface-2:    #232322;
+    --text-primary: #ffffff;
+    --text-secondary:#c3c2b7;
+    --text-muted:   #898781;
+    --grid:         #2c2c2a;
+    --axis:         #383835;
+    --series-1:     #3987e5;
+    --good:         #0ca30c;
+    --warning:      #fab219;
+    --critical:     #d03b3b;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:        #0d0d0d;
+  --surface-1:    #1a1a19;
+  --surface-2:    #232322;
+  --text-primary: #ffffff;
+  --text-secondary:#c3c2b7;
+  --text-muted:   #898781;
+  --grid:         #2c2c2a;
+  --axis:         #383835;
+  --series-1:     #3987e5;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--text-primary);
+  font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 56px; }
+
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+.sub { color: var(--text-muted); font-size: 12.5px; }
+.spacer { flex: 1; }
+
+.conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dot.live { background: var(--good); }
+.dot.dead { background: var(--critical); }
+
+/* Filters/controls sit in one row above everything they affect. */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px;
+  padding: 10px 12px; margin: 14px 0 16px; box-shadow: var(--shadow);
+}
+.ctl { display: inline-flex; align-items: center; gap: 6px; }
+.ctl > label { color: var(--text-secondary); font-size: 12.5px; }
+button, select {
+  font: inherit; font-size: 13px; color: var(--text-primary);
+  background: var(--surface-2); border: 1px solid var(--axis);
+  border-radius: 7px; padding: 4px 10px; cursor: pointer; min-height: 30px;
+}
+button:hover { border-color: var(--series-1); }
+button.on { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+input[type=range] { accent-color: var(--series-1); width: 130px; }
+input[type=number] {
+  font: inherit; font-size: 13px; width: 74px; padding: 4px 6px; min-height: 30px;
+  color: var(--text-primary); background: var(--surface-2);
+  border: 1px solid var(--axis); border-radius: 7px;
+}
+.divider { width: 1px; align-self: stretch; background: var(--grid); }
+
+.cols { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0,1fr); } }
+
+.card {
+  background: var(--surface-1); border: 1px solid var(--grid);
+  border-radius: 10px; padding: 14px; box-shadow: var(--shadow);
+}
+.card h2 {
+  font-size: 13px; font-weight: 600; margin: 0 0 2px;
+  letter-spacing: -.005em;
+}
+.card .note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+
+/* ---- heatmap ---- */
+#grid { display: grid; gap: 2px; aspect-ratio: 1; }
+.cell {
+  position: relative; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 500; cursor: crosshair;
+  /* Deliberately no colour transition: a fade makes a zone that just lost its
+   * target read as a close object for a frame or two, and smears real motion
+   * across frames. Each frame must be shown as measured. */
+}
+.cell.invalid { background: var(--surface-2) !important; color: var(--text-muted); }
+.cell .zn { position: absolute; top: 2px; left: 3px; font-size: 8.5px; opacity: .5; font-weight: 400; }
+.cell.peak { outline: 2px solid var(--warning); outline-offset: -2px; }
+/* Motion trail: where the closest zone was over the preceding frames. */
+.cell .trail {
+  position: absolute; inset: 0; border-radius: 4px;
+  border: 2px solid var(--warning); pointer-events: none;
+}
+
+/* ---- stat tiles ---- */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.tile { background: var(--surface-2); border-radius: 8px; padding: 9px 11px; }
+.tile .k { font-size: 11px; color: var(--text-muted); }
+.tile .v { font-size: 21px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; }
+.tile .u { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+.hero .v { font-size: 30px; }
+
+.legend { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 11.5px; color: var(--text-secondary); }
+.ramp { height: 9px; flex: 1; border-radius: 5px; }
+.legend-row { display: flex; gap: 14px; margin-top: 7px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+canvas { display: block; width: 100%; }
+.chart-wrap { position: relative; }
+
+#tip {
+  position: fixed; z-index: 40; pointer-events: none; opacity: 0;
+  background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--axis); border-radius: 8px; padding: 7px 9px;
+  font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18); max-width: 260px;
+  transition: opacity 90ms;
+}
+#tip .t-h { font-weight: 600; margin-bottom: 3px; }
+#tip .t-r { color: var(--text-secondary); }
+
+table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+th, td { border: 1px solid var(--grid); padding: 3px 5px; text-align: right; }
+th { color: var(--text-muted); font-weight: 500; }
+#tableView { margin-top: 12px; display: none; max-height: 320px; overflow: auto; }
+
+.log {
+  margin-top: 16px; font: 11.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary); background: var(--surface-1);
+  border: 1px solid var(--grid); border-radius: 10px; padding: 10px 12px;
+  max-height: 116px; overflow: auto; white-space: pre-wrap;
+}
+.full { grid-column: 1 / -1; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pill {
+  font-size: 11.5px; padding: 2px 8px; border-radius: 99px;
+  background: var(--surface-2); color: var(--text-secondary);
+}
+.pill.armed { background: var(--warning); color: #0b0b0b; font-weight: 600; }
+.pill.fired { background: var(--good); color: #fff; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ShotCaller — ToF Scope</h1>
+  <span class="sub">VL53L5CX · NUCLEO-F446RE</span>
+  <span class="spacer"></span>
+  <span class="conn"><span class="dot" id="connDot"></span><span id="connText">connecting…</span></span>
+</header>
+
+<div class="controls">
+  <div class="ctl">
+    <label>Resolution</label>
+    <button id="res8" title="8x8 zones, capped at 15Hz">8×8</button>
+    <button id="res4" title="4x4 zones, up to 60Hz">4×4</button>
+  </div>
+  <div class="divider"></div>
+  <div class="ctl">
+    <label>Rate</label>
+    <button id="hzDown" title="Lower the requested ranging frequency">−</button>
+    <span class="pill" id="hzPill">— Hz</span>
+    <button id="hzUp" title="Raise the requested ranging frequency">+</button>
+    <button id="hzMax" title="Jump to the sensor's maximum rate for this resolution">Max</button>
+  </div>
+  <div class="divider"></div>
+  <div class="ctl">
+    <label for="rangeMax">Colour range</label>
+    <input type="range" id="rangeMax" min="400" max="4000" step="100" value="2000">
+    <span class="pill" id="rangeMaxLabel">2000 mm</span>
+  </div>
+  <div class="divider"></div>
+  <div class="ctl">
+    <button id="trailBtn" class="on" title="Mark where the closest zone was in recent frames">Trail</button>
+    <button id="tableBtn" title="Show the current frame as a table">Table</button>
+    <button id="pauseBtn" title="Freeze the view (the board keeps ranging)">Pause</button>
+  </div>
+</div>
+
+<div class="cols">
+
+  <div class="card">
+    <h2>Field of view — distance per zone</h2>
+    <p class="note" id="gridNote">Looking out from the sensor. Brighter = closer.</p>
+    <div id="grid"></div>
+
+    <div class="legend">
+      <span id="rampNear">0 mm</span>
+      <div class="ramp" id="rampBar"></div>
+      <span id="rampFar">2000 mm</span>
+    </div>
+    <div class="legend-row">
+      <span><span class="swatch" style="background:var(--surface-2)"></span>no valid target (status ≠ 5/9)</span>
+      <span><span class="swatch" style="background:var(--warning)"></span>closest valid zone</span>
+    </div>
+
+    <div id="tableView"></div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Timing — can it see a throw?</h2>
+      <p class="note">Delivered frame rate, measured at the host over the last 60 frames.</p>
+      <div class="tiles">
+        <div class="tile hero">
+          <div class="k">Measured rate</div>
+          <div class="v"><span id="fps">—</span> <span class="u">Hz</span></div>
+        </div>
+        <div class="tile hero">
+          <div class="k">Frame interval</div>
+          <div class="v"><span id="interval">—</span> <span class="u">ms</span></div>
+        </div>
+        <div class="tile">
+          <div class="k">Jitter (σ)</div>
+          <div class="v" style="font-size:17px"><span id="jitter">—</span> <span class="u">ms</span></div>
+        </div>
+        <div class="tile">
+          <div class="k">Object at 3 m/s crosses in</div>
+          <div class="v" style="font-size:17px"><span id="crossFrames">—</span> <span class="u">frames</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Signal quality</h2>
+      <p class="note">How much of the grid is returning trustworthy range data right now.</p>
+      <div class="tiles">
+        <div class="tile">
+          <div class="k">Valid zones</div>
+          <div class="v" style="font-size:17px"><span id="validZones">—</span></div>
+        </div>
+        <div class="tile">
+          <div class="k">Closest valid</div>
+          <div class="v" style="font-size:17px"><span id="minDist">—</span> <span class="u">mm</span></div>
+        </div>
+        <div class="tile">
+          <div class="k">Peak signal</div>
+          <div class="v" style="font-size:17px"><span id="peakSig">—</span> <span class="u">kcps/spad</span></div>
+        </div>
+        <div class="tile">
+          <div class="k">Frames received</div>
+          <div class="v" style="font-size:17px"><span id="frameCount">—</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card full">
+    <h2>Closest valid distance over time</h2>
+    <p class="note">A throw through the field of view shows up here as a sharp dip. The dashed line is the capture trigger threshold.</p>
+    <div class="chart-wrap"><canvas id="chartDist" height="150"></canvas></div>
+  </div>
+
+  <div class="card full">
+    <h2>Time between frames</h2>
+    <p class="note">The sensor's temporal resolution — the hard limit on how fast a projectile can be tracked. Flat is good; spikes are dropped or delayed frames.</p>
+    <div class="chart-wrap"><canvas id="chartInterval" height="120"></canvas></div>
+  </div>
+
+  <div class="card full">
+    <h2>Event capture</h2>
+    <p class="note">Arm the trigger, then throw something past the sensor. The frames around the event are held so you can step through them one at a time and see exactly how many frames the object appeared in.</p>
+    <div class="row">
+      <button id="armBtn">Arm trigger</button>
+      <span class="pill" id="armState">idle</span>
+      <div class="ctl">
+        <label for="thresh">Trigger below</label>
+        <input type="number" id="thresh" value="800" min="50" max="4000" step="50">
+        <span class="sub">mm</span>
+      </div>
+      <div class="ctl">
+        <label for="preFrames">Keep</label>
+        <input type="number" id="preFrames" value="20" min="1" max="200" step="1">
+        <span class="sub">frames before /</span>
+        <input type="number" id="postFrames" value="40" min="1" max="200" step="1">
+        <span class="sub">after</span>
+      </div>
+      <button id="saveBtn" title="Write the server-side ring buffer to captures/">Save history to disk</button>
+    </div>
+    <div class="row" style="margin-top:12px" id="scrubRow" hidden>
+      <button id="playBtn">▶ Replay</button>
+      <input type="range" id="scrub" min="0" max="0" value="0" style="flex:1; width:auto">
+      <span class="pill" id="scrubLabel">—</span>
+      <button id="liveBtn">Back to live</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="log" id="log"></div>
+
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+/* ---------- palette ------------------------------------------------------
+ * One sequential blue ramp (steps 100→700), used for magnitude only. On the
+ * light surface the near end is the DARK step; on the dark surface it is the
+ * LIGHT step, so "close" is always the one that stands out from the page
+ * rather than sinking into it. Same ramp, mode-appropriate direction. */
+const RAMP = ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7',
+              '#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const isDark = () => document.documentElement.dataset.theme === 'dark' ||
+                     (document.documentElement.dataset.theme !== 'light' && darkQuery.matches);
+
+/* proximity p in [0,1], 1 = closest */
+function rampColor(p) {
+  p = Math.max(0, Math.min(1, p));
+  const i = Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1));
+  return RAMP[i];
+}
+function cssVar(n) { return getComputedStyle(document.body).getPropertyValue(n).trim(); }
+
+/* ST's target_status table (UM2884 §5.5 table 4). Only 5 and 9 are valid
+ * ranges; everything else means the distance field must not be trusted. */
+const STATUS = {
+  0:'Ranging data not updated', 1:'Signal rate too low on SPAD array',
+  2:'Target phase', 3:'Sigma estimator too high', 4:'Target consistency failed',
+  5:'Range valid', 6:'Wrap around not performed (typically first range)',
+  7:'Rate consistency failed', 8:'Signal rate too low for current target',
+  9:'Range valid with large pulse (possible merged target)',
+  10:'Range valid, no target at previous range', 11:'Measurement consistency failed',
+  12:'Target blurred by another (sharpener)', 13:'Target detected, inconsistent data',
+  255:'No target detected'
+};
+const isValid = st => st === 5 || st === 9;
+
+/* ---------- state -------------------------------------------------------- */
+const S = {
+  frames: [],        // rolling client-side history
+  cap: 1500,
+  latest: null,
+  edge: 8,
+  hz: 15,
+  paused: false,
+  trail: true,
+  rangeMax: 2000,
+  cells: [],
+  arm: 'idle',       // idle | armed | fired
+  capture: null,     // {frames, need}
+  scrubIndex: null,
+  playing: false,
+  total: 0
+};
+
+const $ = id => document.getElementById(id);
+
+/* ---------- grid --------------------------------------------------------- */
+function buildGrid(edge) {
+  const g = $('grid');
+  g.style.gridTemplateColumns = `repeat(${edge}, minmax(0,1fr))`;
+  g.innerHTML = '';
+  S.cells = [];
+  for (let i = 0; i < edge * edge; i++) {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    c.innerHTML = `<span class="zn">${i}</span><span class="dv">—</span>`;
+    c.addEventListener('mousemove', e => showZoneTip(e, i));
+    c.addEventListener('mouseleave', hideTip);
+    g.appendChild(c);
+    S.cells.push(c);
+  }
+  S.edge = edge;
+}
+
+function renderFrame(f) {
+  if (!f) return;
+  if (f.edge !== S.edge) buildGrid(f.edge);
+
+  // Closest valid zone drives the trail marker and the peak outline.
+  let minD = Infinity, minZone = -1, valid = 0, peakSig = 0;
+  for (let i = 0; i < f.d.length; i++) {
+    if (isValid(f.s[i])) {
+      valid++;
+      if (f.d[i] < minD) { minD = f.d[i]; minZone = i; }
+    }
+    if (f.sig[i] > peakSig) peakSig = f.sig[i];
+  }
+
+  for (let i = 0; i < S.cells.length; i++) {
+    const cell = S.cells[i];
+    const d = f.d[i], st = f.s[i];
+    const dv = cell.querySelector('.dv');
+    if (!isValid(st)) {
+      cell.classList.add('invalid');
+      cell.style.backgroundColor = '';
+      dv.textContent = '·';
+      cell.style.color = '';
+    } else {
+      cell.classList.remove('invalid');
+      const p = 1 - Math.min(1, d / S.rangeMax);   // proximity
+      cell.style.backgroundColor = rampColor(p);
+      dv.textContent = d;
+      // Ink stays legible against whichever end of the ramp the cell landed on.
+      const idx = Math.round((isDark() ? (1 - p) : p) * (RAMP.length - 1));
+      const deep = isDark() ? idx > 6 : idx > 6;
+      cell.style.color = deep ? '#ffffff' : '#0b0b0b';
+    }
+    cell.classList.toggle('peak', i === minZone);
+  }
+
+  drawTrail(minZone);
+
+  $('validZones').textContent = `${valid}/${f.d.length}`;
+  $('minDist').textContent = minZone >= 0 ? minD : '—';
+  $('peakSig').textContent = peakSig;
+  $('frameCount').textContent = S.total;
+  if (document.getElementById('tableView').style.display === 'block') renderTable(f);
+}
+
+/* Fading markers showing the closest zone over the last few frames -- the
+ * cheapest way to see a trajectory across the grid rather than a single
+ * snapshot. */
+function drawTrail(currentZone) {
+  document.querySelectorAll('.trail').forEach(t => t.remove());
+  if (!S.trail) return;
+  const hist = S.frames.slice(-6, -1);
+  hist.forEach((f, k) => {
+    if (f.edge !== S.edge) return;
+    let md = Infinity, mz = -1;
+    for (let i = 0; i < f.d.length; i++) {
+      if (isValid(f.s[i]) && f.d[i] < md) { md = f.d[i]; mz = i; }
+    }
+    if (mz < 0 || mz === currentZone || !S.cells[mz]) return;
+    const t = document.createElement('div');
+    t.className = 'trail';
+    t.style.opacity = (0.14 + 0.13 * k).toFixed(2);
+    S.cells[mz].appendChild(t);
+  });
+}
+
+function renderTable(f) {
+  const edge = f.edge;
+  let h = '<table><tr><th></th>';
+  for (let c = 0; c < edge; c++) h += `<th>c${c}</th>`;
+  h += '</tr>';
+  for (let r = 0; r < edge; r++) {
+    h += `<tr><th>r${r}</th>`;
+    for (let c = 0; c < edge; c++) {
+      const i = r * edge + c;
+      h += isValid(f.s[i]) ? `<td>${f.d[i]}</td>`
+                           : `<td style="color:var(--text-muted)">s${f.s[i]}</td>`;
+    }
+    h += '</tr>';
+  }
+  $('tableView').innerHTML = h + '</table>';
+}
+
+/* ---------- tooltips ----------------------------------------------------- */
+const tip = $('tip');
+function showTip(e, html) {
+  tip.innerHTML = html;
+  tip.style.opacity = 1;
+  const pad = 14;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  const r = tip.getBoundingClientRect();
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+function hideTip() { tip.style.opacity = 0; }
+
+function showZoneTip(e, i) {
+  const f = viewFrame();
+  if (!f) return;
+  const edge = f.edge;
+  showTip(e, `<div class="t-h">Zone ${i} &nbsp;<span style="color:var(--text-muted)">r${Math.floor(i/edge)} c${i%edge}</span></div>
+    <div class="t-r">Distance: <b style="color:var(--text-primary)">${isValid(f.s[i]) ? f.d[i] + ' mm' : '—'}</b></div>
+    <div class="t-r">Status ${f.s[i]}: ${STATUS[f.s[i]] || 'unknown'}</div>
+    <div class="t-r">Signal: ${f.sig[i]} kcps/spad</div>`);
+}
+
+/* ---------- charts ------------------------------------------------------- */
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  /* Cache the intended CSS height on first use: assigning cv.height rewrites
+   * the height *attribute*, so reading it back each redraw would re-multiply
+   * by dpr and the chart would grow without bound. */
+  if (!cv.dataset.cssHeight) cv.dataset.cssHeight = cv.getAttribute('height');
+  const h = parseInt(cv.dataset.cssHeight, 10);
+  const w = cv.clientWidth;
+  cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+/* Shared line-chart renderer: recessive grid, 2px stroke, single series, so
+ * no legend is needed -- the card title names the measure. */
+function drawSeries(cv, values, opts) {
+  const { ctx, w, h } = fitCanvas(cv);
+  const padL = 44, padR = 8, padT = 10, padB = 18;
+  ctx.clearRect(0, 0, w, h);
+  if (!values.length) return;
+
+  const finite = values.filter(v => v != null && isFinite(v));
+  if (!finite.length) return;
+  let lo = opts.min != null ? opts.min : Math.min(...finite);
+  let hi = opts.max != null ? opts.max : Math.max(...finite);
+  if (hi - lo < 1e-6) { hi = lo + 1; }
+  const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+  if (opts.floorZero && lo < 0) lo = 0;
+
+  const X = i => padL + (i / Math.max(1, values.length - 1)) * (w - padL - padR);
+  const Y = v => padT + (1 - (v - lo) / (hi - lo)) * (h - padT - padB);
+
+  // gridlines + y labels
+  ctx.strokeStyle = cssVar('--grid'); ctx.lineWidth = 1;
+  ctx.fillStyle = cssVar('--text-muted');
+  ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let k = 0; k <= 3; k++) {
+    const v = lo + (hi - lo) * k / 3, y = Math.round(Y(v)) + .5;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.fillText(Math.round(v).toLocaleString(), padL - 6, y);
+  }
+
+  // threshold marker (capture trigger)
+  if (opts.threshold != null && opts.threshold > lo && opts.threshold < hi) {
+    ctx.save();
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = cssVar('--warning'); ctx.lineWidth = 1.5;
+    const y = Math.round(Y(opts.threshold)) + .5;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(w - padR, y); ctx.stroke();
+    ctx.restore();
+  }
+
+  // series -- gaps where there is no valid reading, rather than a fake join
+  ctx.strokeStyle = cssVar('--series-1'); ctx.lineWidth = 2;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  let pen = false;
+  values.forEach((v, i) => {
+    if (v == null || !isFinite(v)) { pen = false; return; }
+    const x = X(i), y = Y(v);
+    if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // scrub position
+  if (opts.markIndex != null && opts.markIndex >= 0 && opts.markIndex < values.length) {
+    const x = Math.round(X(opts.markIndex)) + .5;
+    ctx.strokeStyle = cssVar('--warning'); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke();
+  }
+
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = cssVar('--text-muted');
+  ctx.fillText(opts.unit || '', padL, h - 5);
+  ctx.textAlign = 'right';
+  ctx.fillText(`${values.length} frames`, w - padR, h - 5);
+
+  cv._chart = { values, X, Y, lo, hi, padL, padR, w, opts };
+}
+
+function attachCrosshair(cv, fmt) {
+  cv.addEventListener('mousemove', e => {
+    const st = cv._chart; if (!st) return;
+    const r = cv.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const frac = (x - st.padL) / (st.w - st.padL - st.padR);
+    const i = Math.round(frac * (st.values.length - 1));
+    if (i < 0 || i >= st.values.length) { hideTip(); return; }
+    showTip(e, fmt(i, st.values[i]));
+  });
+  cv.addEventListener('mouseleave', hideTip);
+}
+
+/* ---------- derived series ---------------------------------------------- */
+function minValid(f) {
+  let m = Infinity;
+  for (let i = 0; i < f.d.length; i++) if (isValid(f.s[i]) && f.d[i] < m) m = f.d[i];
+  return isFinite(m) ? m : null;
+}
+function intervals(frames) {
+  const out = [];
+  for (let i = 1; i < frames.length; i++) out.push((frames[i].rx - frames[i-1].rx) * 1000);
+  return out;
+}
+
+function updateCharts() {
+  const win = S.frames.slice(-240);
+  const dists = win.map(minValid);
+  const iv = intervals(win);
+
+  let markIdx = null;
+  if (S.scrubIndex != null && S.capture) markIdx = null; // scrub marks the capture, not the live window
+
+  drawSeries($('chartDist'), dists, {
+    unit: 'mm', floorZero: true,
+    threshold: parseFloat($('thresh').value),
+    markIndex: markIdx
+  });
+  drawSeries($('chartInterval'), iv, { unit: 'ms between frames', min: 0 });
+}
+
+function updateStats() {
+  const win = S.frames.slice(-60);
+  const iv = intervals(win);
+  if (iv.length < 2) return;
+  const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+  const sd = Math.sqrt(iv.reduce((a, b) => a + (b - mean) ** 2, 0) / iv.length);
+  $('fps').textContent = (1000 / mean).toFixed(1);
+  $('interval').textContent = mean.toFixed(1);
+  $('jitter').textContent = sd.toFixed(1);
+
+  /* How many frames a 3 m/s object gets while crossing the field. At 1 m the
+   * 45-degree FoV spans ~0.83 m, so crossing takes ~830/3000 s ~= 276 ms.
+   * This is the number that decides whether classification is even possible. */
+  const crossingMs = 276;
+  $('crossFrames').textContent = (crossingMs / mean).toFixed(1);
+}
+
+/* ---------- event capture ------------------------------------------------ */
+function onNewFrame(f) {
+  if (S.capture && S.capture.need > 0) {
+    S.capture.frames.push(f);
+    S.capture.need--;
+    if (S.capture.need === 0) {
+      S.arm = 'fired';
+      $('armState').textContent = `captured ${S.capture.frames.length} frames`;
+      $('armState').className = 'pill fired';
+      $('armBtn').classList.remove('on');
+      openScrubber();
+    }
+    return;
+  }
+  if (S.arm === 'armed') {
+    const m = minValid(f);
+    const th = parseFloat($('thresh').value);
+    if (m != null && m < th) {
+      const pre = Math.max(1, parseInt($('preFrames').value, 10) || 20);
+      const post = Math.max(1, parseInt($('postFrames').value, 10) || 40);
+      S.capture = { frames: S.frames.slice(-pre).concat([f]), need: post };
+      $('armState').textContent = `triggered at ${m} mm — recording…`;
+    }
+  }
+}
+
+function openScrubber() {
+  const n = S.capture.frames.length;
+  $('scrubRow').hidden = false;
+  $('scrub').max = String(n - 1);
+  $('scrub').value = '0';
+  S.scrubIndex = 0;
+  showScrub();
+}
+function showScrub() {
+  if (!S.capture) return;
+  const i = S.scrubIndex;
+  const f = S.capture.frames[i];
+  const t0 = S.capture.frames[0].t;
+  $('scrubLabel').textContent = `frame ${i + 1}/${S.capture.frames.length} · +${f.t - t0} ms`;
+  renderFrame(f);
+}
+function viewFrame() {
+  return (S.scrubIndex != null && S.capture) ? S.capture.frames[S.scrubIndex] : S.latest;
+}
+
+/* ---------- transport ---------------------------------------------------- */
+function connect() {
+  const es = new EventSource('/events');
+  es.onopen = () => {
+    $('connDot').className = 'dot live';
+    $('connText').textContent = 'streaming';
+  };
+  es.onerror = () => {
+    $('connDot').className = 'dot dead';
+    $('connText').textContent = 'disconnected — is viz_server.py running?';
+  };
+  es.onmessage = ev => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'frame') {
+      const f = msg.frame;
+      S.total++;
+      S.frames.push(f);
+      if (S.frames.length > S.cap) S.frames.splice(0, S.frames.length - S.cap);
+      S.latest = f;
+      onNewFrame(f);
+    } else if (msg.type === 'config') {
+      const c = msg.config;
+      S.hz = parseInt(c.hz, 10);
+      $('hzPill').textContent = `${c.hz} Hz`;
+      $('res8').classList.toggle('on', c.res === '8');
+      $('res4').classList.toggle('on', c.res === '4');
+      $('gridNote').textContent =
+        `${c.res}×${c.res} zones · requested ${c.hz} Hz (sensor max ${c.max_hz} Hz at this resolution) · ${c.mode === 'cont' ? 'continuous' : 'autonomous'} mode. Brighter = closer.`;
+      appendLog(`config: ${c.res}x${c.res} @ ${c.hz}Hz, mode=${c.mode}`);
+    } else if (msg.type === 'log') {
+      appendLog(msg.log.text);
+    }
+  };
+}
+function appendLog(t) {
+  const el = $('log');
+  el.textContent += (el.textContent ? '\n' : '') + t;
+  el.scrollTop = el.scrollHeight;
+}
+const cmd = c => fetch('/cmd?c=' + encodeURIComponent(c));
+
+/* ---------- render loop --------------------------------------------------
+ * Decoupled from arrival: frames land at up to 60Hz, but the DOM only needs
+ * repainting at display rate, and the charts far less often than that. */
+let lastChart = 0;
+function loop(ts) {
+  if (!S.paused && S.scrubIndex == null && S.latest) renderFrame(S.latest);
+  if (ts - lastChart > 120) {
+    updateCharts();
+    updateStats();
+    lastChart = ts;
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------- wiring ------------------------------------------------------- */
+buildGrid(8);
+paintRampLegend();
+
+$('res8').onclick = () => cmd('8');
+$('res4').onclick = () => cmd('4');
+$('hzUp').onclick = () => cmd('+');
+$('hzDown').onclick = () => cmd('-');
+$('hzMax').onclick = () => cmd('M');
+
+$('rangeMax').oninput = e => {
+  S.rangeMax = +e.target.value;
+  $('rangeMaxLabel').textContent = `${S.rangeMax} mm`;
+  $('rampFar').textContent = `${S.rangeMax} mm`;
+  paintRampLegend();
+};
+$('trailBtn').onclick = e => {
+  S.trail = !S.trail;
+  e.target.classList.toggle('on', S.trail);
+};
+$('tableBtn').onclick = e => {
+  const tv = $('tableView');
+  const on = tv.style.display !== 'block';
+  tv.style.display = on ? 'block' : 'none';
+  e.target.classList.toggle('on', on);
+  if (on && viewFrame()) renderTable(viewFrame());
+};
+$('pauseBtn').onclick = e => {
+  S.paused = !S.paused;
+  e.target.classList.toggle('on', S.paused);
+  e.target.textContent = S.paused ? 'Resume' : 'Pause';
+};
+
+$('armBtn').onclick = e => {
+  if (S.arm === 'armed') {
+    S.arm = 'idle'; S.capture = null;
+    $('armState').textContent = 'idle'; $('armState').className = 'pill';
+    e.target.classList.remove('on');
+  } else {
+    S.arm = 'armed'; S.capture = null; S.scrubIndex = null;
+    $('scrubRow').hidden = true;
+    $('armState').textContent = 'armed — waiting for something to come close';
+    $('armState').className = 'pill armed';
+    e.target.classList.add('on');
+  }
+};
+$('scrub').oninput = e => { S.scrubIndex = +e.target.value; showScrub(); };
+$('liveBtn').onclick = () => {
+  S.scrubIndex = null; S.playing = false;
+  $('scrubRow').hidden = true;
+  S.arm = 'idle'; S.capture = null;
+  $('armState').textContent = 'idle'; $('armState').className = 'pill';
+  $('armBtn').classList.remove('on');
+};
+$('playBtn').onclick = () => {
+  if (!S.capture) return;
+  S.playing = !S.playing;
+  $('playBtn').textContent = S.playing ? '❚❚ Pause' : '▶ Replay';
+  if (S.playing) replayStep();
+};
+function replayStep() {
+  if (!S.playing || !S.capture) return;
+  S.scrubIndex = (S.scrubIndex + 1) % S.capture.frames.length;
+  $('scrub').value = String(S.scrubIndex);
+  showScrub();
+  setTimeout(replayStep, 220);   // deliberately slower than real time
+}
+$('saveBtn').onclick = async () => {
+  const r = await fetch('/save');
+  const j = await r.json();
+  appendLog(`saved ${j.frames} frames -> ${j.path}`);
+};
+
+function paintRampLegend() {
+  const stops = [];
+  for (let k = 0; k <= 10; k++) stops.push(rampColor(1 - k / 10));
+  $('rampBar').style.background = `linear-gradient(to right, ${stops.join(',')})`;
+}
+darkQuery.addEventListener('change', () => { paintRampLegend(); });
+
+attachCrosshair($('chartDist'), (i, v) =>
+  `<div class="t-h">Closest valid zone</div><div class="t-r">${v == null ? 'no valid target' : v + ' mm'}</div>`);
+attachCrosshair($('chartInterval'), (i, v) =>
+  `<div class="t-h">Frame interval</div><div class="t-r">${v == null ? '—' : v.toFixed(1) + ' ms (' + (1000/v).toFixed(1) + ' Hz)'}</div>`);
+
+addEventListener('resize', updateCharts);
+connect();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
