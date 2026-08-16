@@ -4,8 +4,13 @@
  * VL53L5CX's register protocol.
  */
 #include "platform.h"
+#include "main.h"   /* VL53_LPN_* / VL53_I2C_RST_* shield pin definitions */
 
-#define VL53L5CX_I2C_TIMEOUT_MS 100
+/* vl53l5cx_init() uploads the sensor firmware as three single writes of
+ * 0x8000 (32768) bytes. At 400kHz that is ~32768*9/400000 = ~0.74s of bus time
+ * per chunk, so the timeout has to clear that with margin -- a 100ms timeout
+ * aborts the upload mid-flight and surfaces as a generic init status=1. */
+#define VL53L5CX_I2C_TIMEOUT_MS 2000
 
 uint8_t VL53L5CX_RdByte(VL53L5CX_Platform *p_platform, uint16_t RegisterAdress, uint8_t *p_value)
 {
@@ -47,9 +52,21 @@ uint8_t VL53L5CX_WrMulti(VL53L5CX_Platform *p_platform, uint16_t RegisterAdress,
 
 uint8_t VL53L5CX_Reset_Sensor(VL53L5CX_Platform *p_platform)
 {
-    /* No LPn/reset GPIO wired on the X-NUCLEO-53L5A1 by default -- power-on
-     * reset only. Return OK; add GPIO toggling here if you wire LPn. */
     (void)p_platform;
+
+    /* Sensor reset on the X-NUCLEO-53L5A1 is an LPn low->high toggle, with the
+     * I2C block reset pulsed in between (same sequence as ST's Arduino driver). */
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+
+    HAL_GPIO_WritePin(VL53_I2C_RST_GPIO_Port, VL53_I2C_RST_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
+    HAL_GPIO_WritePin(VL53_I2C_RST_GPIO_Port, VL53_I2C_RST_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
+
     return 0;
 }
 

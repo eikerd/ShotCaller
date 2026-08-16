@@ -7,6 +7,9 @@
  * Wiring (X-NUCLEO-53L5A1 on Arduino header):
  *   I2C1_SCL -> PB8 (D15)
  *   I2C1_SDA -> PB9 (D14)
+ *   PWR_EN   -> PB0 (A3)   -- gates the shield's AVDD load switch
+ *   LPn      -> PB4 (D5)   -- must be high for the sensor to talk on I2C
+ *   I2C_RST  -> PB3 (D3)   -- pulse high to reset the sensor's I2C block
  *   USART2   -> PA2 (TX) / PA3 (RX), routed to ST-LINK VCP, 115200 8N1
  */
 #include "main.h"
@@ -21,6 +24,8 @@ static void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void VL53_PowerUp(void);
+static void I2C_BusScan(void);
 
 int __io_putchar(int ch)
 {
@@ -37,6 +42,9 @@ int main(void)
     MX_USART2_UART_Init();
 
     printf("\r\n--- ShotCaller / VL53L5CX bring-up ---\r\n");
+
+    VL53_PowerUp();
+    I2C_BusScan();
 
     VL53L5CX_Configuration dev;
     memset(&dev, 0, sizeof(dev));
@@ -135,6 +143,7 @@ static void MX_GPIO_Init(void)
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
 
     HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
@@ -143,6 +152,60 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+
+    /* Shield control pins start in their "sensor held off" state: power gate
+     * open, LPn low (sensor mute on I2C), I2C_RST released low. */
+    HAL_GPIO_WritePin(VL53_PWR_EN_GPIO_Port, VL53_PWR_EN_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(VL53_I2C_RST_GPIO_Port, VL53_I2C_RST_Pin, GPIO_PIN_RESET);
+
+    GPIO_InitStruct.Pin = VL53_PWR_EN_Pin | VL53_LPN_Pin | VL53_I2C_RST_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+}
+
+/* Bring the X-NUCLEO-53L5A1 up in the same order ST's own driver does:
+ * enable the AVDD load switch, let it settle, pulse I2C_RST, then release LPn
+ * high so the sensor answers on the bus. Skipping the PWR_EN step leaves the
+ * sensor unpowered and silent -- which is exactly how this bring-up failed
+ * before the pin mapping was tracked down. */
+static void VL53_PowerUp(void)
+{
+    HAL_GPIO_WritePin(VL53_PWR_EN_GPIO_Port, VL53_PWR_EN_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
+
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+
+    HAL_GPIO_WritePin(VL53_I2C_RST_GPIO_Port, VL53_I2C_RST_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
+    HAL_GPIO_WritePin(VL53_I2C_RST_GPIO_Port, VL53_I2C_RST_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_SET);
+    HAL_Delay(10);
+}
+
+/* Raw 7-bit address sweep. Distinguishes "sensor answering at an unexpected
+ * address" from "nothing on the bus at all" -- the two failure modes look
+ * identical from vl53l5cx_is_alive() alone. */
+static void I2C_BusScan(void)
+{
+    int found = 0;
+
+    printf("I2C1 scan:");
+    for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+        if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 5) == HAL_OK) {
+            printf(" 0x%02X", addr);
+            found++;
+        }
+    }
+    if (!found) {
+        printf(" (no devices responded)");
+    }
+    printf("\r\n  expecting 0x29 (7-bit) = 0x52 (8-bit) for VL53L5CX\r\n");
 }
 
 static void MX_I2C1_Init(void)
