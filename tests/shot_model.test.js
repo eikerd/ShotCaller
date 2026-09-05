@@ -106,11 +106,13 @@ test("rim intercept distinguishes a center make from an outside miss", () => {
   assert.ok(make.tMs < 80, "gravity should bend the path to the rim sooner than a linear extrapolation");
   assert.equal(make.model, "piecewise-ballistic");
   assert.equal(miss.inside, false);
-  assert.equal(predictRimIntercept(
+  const lob = predictRimIntercept(
     { x: 0, y: 100, z: 0 },
     { x: 0, y: 100, z: 0 },
     geometry,
-  ), null);
+  );
+  assert.ok(lob, "an initially rising lob should still arc downward through the rim plane");
+  assert.equal(lob.inside, true);
 });
 
 test("reflection works for an arbitrary plane normal and preserves configurable tangential motion", () => {
