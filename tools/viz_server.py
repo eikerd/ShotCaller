@@ -444,6 +444,13 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send(500, f"cannot read shot_model.js: {e}")
 
+        elif url.path == "/viz_demo.js":
+            try:
+                with open(os.path.join(HERE, "viz_demo.js"), "rb") as f:
+                    self._send(200, f.read(), "text/javascript; charset=utf-8")
+            except OSError as e:
+                self._send(500, f"cannot read viz_demo.js: {e}")
+
         elif url.path == "/api/status":
             self._send(200, json.dumps({
                 "connected": self.link.ser is not None and self.link.ser.is_open,
