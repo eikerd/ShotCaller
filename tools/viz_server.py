@@ -45,6 +45,7 @@ REPO = os.path.dirname(HERE)
 # scrub back through a throw that already happened) still has history to show.
 # 1800 frames is ~2 minutes at 15Hz, ~30 seconds at 60Hz.
 HISTORY = 1800
+STREAM_STALE_AFTER_SECONDS = 2.0
 
 
 THROWS_DIR = os.path.join(REPO, "captures", "throws")
@@ -249,7 +250,26 @@ class SensorLink:
 
         self.frames_seen = 0
         self.parse_errors = 0
+        self.last_frame_at = None
         self.recording_failure_noted = False
+
+    def status(self, now=None):
+        """Report sensor liveness, not merely whether the OS opened a port."""
+        now = time.time() if now is None else now
+        serial_open = self.ser is not None and self.ser.is_open
+        frame_age = (
+            None if self.last_frame_at is None else max(0.0, now - self.last_frame_at)
+        )
+        return {
+            "connected": bool(
+                serial_open
+                and frame_age is not None
+                and frame_age <= STREAM_STALE_AFTER_SECONDS
+            ),
+            "serial_open": serial_open,
+            "last_frame_at": self.last_frame_at,
+            "last_frame_age_seconds": frame_age,
+        }
 
     def open(self):
         self.ser = serial.Serial(self.port, self.baud, timeout=1.0)
@@ -362,6 +382,7 @@ class SensorLink:
                     self.parse_errors += 1
                     continue
                 self.frames_seen += 1
+                self.last_frame_at = time.time()
                 if (self.recorder and not self.recorder.record_frame(frame)
                         and not self.recording_failure_noted):
                     self.recording_failure_noted = True
@@ -444,16 +465,10 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send(500, f"cannot read shot_model.js: {e}")
 
-        elif url.path == "/viz_demo.js":
-            try:
-                with open(os.path.join(HERE, "viz_demo.js"), "rb") as f:
-                    self._send(200, f.read(), "text/javascript; charset=utf-8")
-            except OSError as e:
-                self._send(500, f"cannot read viz_demo.js: {e}")
-
         elif url.path == "/api/status":
+            link_status = self.link.status()
             self._send(200, json.dumps({
-                "connected": self.link.ser is not None and self.link.ser.is_open,
+                **link_status,
                 "port": self.link.port,
                 "baud": self.link.baud,
                 "frames_seen": self.link.frames_seen,
@@ -585,7 +600,7 @@ def main():
     ap.add_argument("--port", default=os.environ.get("SHOTCALLER_PORT"),
                     help="serial device (default: autodetect /dev/cu.usbmodem*)")
     ap.add_argument("--baud", type=int,
-                    default=int(os.environ.get("SHOTCALLER_BAUD", "921600")))
+                    default=int(os.environ.get("SHOTCALLER_BAUD", "460800")))
     ap.add_argument("--http-port", type=int, default=8420)
     args = ap.parse_args()
 

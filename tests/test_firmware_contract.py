@@ -4,6 +4,8 @@ import unittest
 
 
 SOURCE = pathlib.Path("ShotCaller/Src/main.c").read_text(encoding="utf-8")
+VIZ_SERVER = pathlib.Path("tools/viz_server.py").read_text(encoding="utf-8")
+CAPTURE_TOOL = pathlib.Path("capture_serial.py").read_text(encoding="utf-8")
 
 
 class FirmwareContractTests(unittest.TestCase):
@@ -21,6 +23,11 @@ class FirmwareContractTests(unittest.TestCase):
         )
         self.assertRegex(SOURCE, r"RecoverSensor\(&dev\)")
         self.assertRegex(SOURCE, r"E,sensor-read,status=%u")
+
+    def test_uart_tools_share_the_stable_460800_baud_default(self):
+        self.assertRegex(SOURCE, r"huart2\.Init\.BaudRate\s*=\s*460800")
+        self.assertIn('SHOTCALLER_BAUD", "460800"', VIZ_SERVER)
+        self.assertIn('SHOTCALLER_BAUD", "460800"', CAPTURE_TOOL)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import os
 import socket
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from tools import viz_server
@@ -85,6 +86,20 @@ class LocalServerTests(unittest.TestCase):
             self.assertGreater(server.server_port, 0)
         finally:
             server.server_close()
+
+
+class SensorLinkStatusTests(unittest.TestCase):
+    def test_open_serial_port_is_not_reported_live_until_frames_arrive(self):
+        link = viz_server.SensorLink("/dev/test-shotcaller", 921600)
+        link.ser = SimpleNamespace(is_open=True)
+
+        waiting = link.status(now=100.0)
+        self.assertTrue(waiting["serial_open"])
+        self.assertFalse(waiting["connected"])
+
+        link.last_frame_at = 99.25
+        self.assertTrue(link.status(now=100.0)["connected"])
+        self.assertFalse(link.status(now=102.0)["connected"])
 
 
 if __name__ == "__main__":

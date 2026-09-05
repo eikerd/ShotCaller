@@ -26,3 +26,8 @@ test("live sensor-mode clicks always expose request, acknowledgment, or failure"
   assert.match(html, /function confirmSensorMode\(config\)/);
   assert.match(html, /payload\.type==="config".*confirmSensorMode\(payload\.config\)/s);
 });
+
+test("dashboard never calls an open event stream a live sensor", () => {
+  assert.doesNotMatch(html, /events\.onopen=.*linkText.*streaming/);
+  assert.match(html, /status\.connected\?"sensor live":"no sensor data"/);
+});

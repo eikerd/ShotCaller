@@ -33,9 +33,10 @@ desired reliability, the smallest robust addition is a second orthogonal ToF
 sensor or a short break-beam just below the rim. That second sensor would be a
 confirmation channel, not a replacement for trajectory tracking.
 
-The VL53L5CX supports a 4x4 mode at 60 Hz, a 45-degree square field of view
-(about 65 degrees diagonal), and closest-target ordering. The firmware now
-uses all three product-oriented settings.
+The VL53L5CX supports 8x8 at 15 Hz for spatial inspection, 4x4 at 60 Hz for
+trajectory acquisition, a 45-degree square field of view (about 65 degrees
+diagonal), and closest-target ordering. Firmware boots into the requested 8x8
+view; arming selects the faster tracking mode.
 
 ## Mount geometry
 
@@ -209,14 +210,24 @@ Use this sequence:
 If a representative object regularly yields fewer than three valid frames,
 software tuning has reached the limit of the single-sensor geometry.
 
-## Current verified rig
+## Current rig status (2026-09-05 13:01 CDT)
 
 - MCU detected over ST-LINK: STM32F446, chip ID `0x421`.
-- Serial: `/dev/cu.usbmodem11203` at 921600 baud (autodetected by the tools).
-- Firmware: 4x4 at 60 Hz, closest-target ordering.
-- Post-flash capture: 98 complete frames, approximately 16.8 ms mean board interval,
-  with 16 zones per complete frame and the UART declaration
-  `target=closest`.
-- Dashboard: desktop and 390 px mobile smoke-tested with no browser exceptions
-  or horizontal overflow; live calibration reached `ARMED` with 16/16 valid
-  zones and zero parse errors.
+- Serial: `/dev/cu.usbmodem11203` at 460800 baud (autodetected by the tools).
+- Firmware: 8x8 at 15 Hz on boot, closest-target ordering, with automatic
+  sensor power-cycle/reinitialization after I2C read errors.
+- Sensor-side proof: a debugger reached `StreamFrame` with real frame id 34,
+  8x8 ranging active, and `HAL_UART_Transmit` returning `HAL_OK`.
+- Current end-to-end result: **not live**. The ST-LINK virtual serial port is
+  open but is delivering zero bytes in either direction, so the 13:01 live
+  smoke test recorded zero frames. The dashboard reports `NO SENSOR DATA`
+  instead of treating an open port as a working sensor.
+- Last known successful transport capture: the archived 4x4/60 Hz session at
+  `captures/sessions/session-20260905-054301.ndjson.gz` contains real range
+  frames from the same `/dev/cu.usbmodem11203` port.
+- Isolation result: after a full USB power cycle, the exact firmware commit
+  that produced that archived session was rebuilt, reflashed, and tested at
+  its original 921600 baud; it also delivered zero bytes. The current 8x8
+  firmware was then restored and tested at 460800 with the same result. This
+  rules out the dashboard, recovery changes, and baud choice as the cause of
+  the present VCP failure.
