@@ -87,7 +87,7 @@ class SessionRecorder:
         }):
             raise OSError(f"cannot initialize session log: {self.error}")
 
-    def _write(self, record):
+    def _write(self, record, count_frame=False):
         with self._lock:
             if self.error is not None or self._file is None:
                 return False
@@ -97,21 +97,19 @@ class SessionRecorder:
                 # the OS cache, but a crash or forced stop will not strand a
                 # throw in Python's userspace buffer.
                 self._file.flush()
+                if count_frame:
+                    self.frames_recorded += 1
                 return True
             except (OSError, ValueError) as exc:
                 self.error = str(exc)
                 return False
 
     def record_frame(self, frame):
-        if not self._write({
+        return self._write({
             "type": "frame",
             "recorded_at": time.time(),
             "frame": frame,
-        }):
-            return False
-        with self._lock:
-            self.frames_recorded += 1
-        return True
+        }, count_frame=True)
 
     def record_config(self, config):
         return self._write({
@@ -244,6 +242,7 @@ class SensorLink:
 
         self.frames_seen = 0
         self.parse_errors = 0
+        self.recording_failure_noted = False
 
     def open(self):
         self.ser = serial.Serial(self.port, self.baud, timeout=1.0)
@@ -356,7 +355,9 @@ class SensorLink:
                     self.parse_errors += 1
                     continue
                 self.frames_seen += 1
-                if self.recorder and not self.recorder.record_frame(frame):
+                if (self.recorder and not self.recorder.record_frame(frame)
+                        and not self.recording_failure_noted):
+                    self.recording_failure_noted = True
                     self._note(
                         f"CRITICAL: continuous recorder stopped: "
                         f"{self.recorder.status()['error']}",
