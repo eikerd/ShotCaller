@@ -29,6 +29,13 @@ class SessionRecorderTests(unittest.TestCase):
                 started_at=1_700_000_000.0,
             )
             recorder.record_config({"res": "4", "hz": "60"})
+            recorder.record_detector_config({
+                "geometry": {
+                    "rearWallBankEnabled": True,
+                    "rearWallGapMm": 30,
+                    "rearWallRestitution": 0.5,
+                }
+            })
             recorder.record_frame(frame)
 
             # Read before close: every frame must already be durable while a
@@ -38,9 +45,10 @@ class SessionRecorderTests(unittest.TestCase):
 
             self.assertEqual(
                 [record["type"] for record in records],
-                ["session-start", "config", "frame"],
+                ["session-start", "config", "detector-config", "frame"],
             )
-            self.assertEqual(records[2]["frame"], frame)
+            self.assertTrue(records[2]["config"]["geometry"]["rearWallBankEnabled"])
+            self.assertEqual(records[3]["frame"], frame)
             self.assertEqual(recorder.status()["frames_recorded"], 1)
             self.assertTrue(recorder.status()["active"])
             self.assertTrue(os.path.isfile(recorder.status()["path"]))
