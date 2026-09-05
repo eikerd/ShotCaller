@@ -5,12 +5,16 @@ rim classifies thrown objects as "in" vs "miss" and triggers audio samples.
 Long-term target is a standalone ESP32 build; current phase is bring-up on
 an STM32 Nucleo bench rig to validate the sensor before porting.
 
-**Status: sensor works end to end.** Firmware builds, flashes, ranges, and
-streams live 8x8 (or 4x4) frames over UART into a browser-based scope at
-`tools/`. Full command-line build/flash/debug loop, no GUI needed.
+**Status: live 3D trajectory prototype works end to end.** Firmware builds,
+flashes, boots in 4x4/60Hz closest-target mode, and streams frames into the
+browser trajectory lab. The host now performs calibrated background
+subtraction, 3D velocity/intercept estimation, an explicit event state machine,
+and virtual-rim in/miss classification. See `docs/SHOTCALLER-NEXT.md` for the
+geometry, event contract, constraints, and real-throw validation plan.
 
-Current phase is *characterisation*: using the scope to learn what the
-sensor can actually see before writing any hit/miss classification.
+Current phase is *physical calibration*: mount the rig, enter the measured can
+geometry, and collect labelled real throws. Synthetic behavior and the live
+transport are verified; real-world classification accuracy is not yet known.
 
 ## Hardware
 
@@ -63,8 +67,8 @@ I2C1 scan: 0x29
   expecting 0x29 (7-bit) = 0x52 (8-bit) for VL53L5CX
 VL53L5CX detected. Loading firmware (few hundred ms)...
 # init OK
-C,res=8,hz=15,mode=cont,max_hz=15
-F,0,2697,8,15,1485:6:10,...
+C,res=4,hz=60,mode=cont,max_hz=60,target=closest
+F,0,2697,4,60,1485:6:10,...
 ```
 
 ## The live scope + shot detector (`tools/`)
@@ -80,64 +84,60 @@ SSE rather than WebSockets because the data is strictly one-directional at up
 to 60Hz and SSE needs nothing outside the standard library. Everything runs
 locally; nothing is uploaded anywhere.
 
-`viz.html` is the UI, top to bottom: **shot detector**, field-of-view heatmap,
-the two strip charts, then timing/signal-quality diagnostics.
+`viz.html` is the application-specific trajectory lab: event state machine,
+orbitable 3D can/clip/FOV view, live point cloud, geometry and audio controls,
+foreground raster, event trace, and ground-truth labelling.
 
 ### Physical setup this is built around
 
-The board clips to the **back rim of the trash can, at rim level**, looking
-forward across the opening. An object that actually goes in passes through the
-~12-inch ring directly in front of the board -- which on the sensor grid means
-**a small set of zones, close in** (bottom-centre by default). An object that
-misses flies through the field of view without ever registering in those zones
-at close range. That geometry, not statistics, is what the detector keys on.
+The sensor clips to the **rear center of the rim**, with its lens 25-50mm above
+the rim, looking forward and slightly down across the opening. The first pitch
+estimate aims at the far inner rim: `atan(sensor height / opening depth)`.
+Measured width, depth, height, pitch, yaw, and sensor orientation are entered
+in the dashboard and applied directly to the 3D transform.
 
-### The detector (Missile Command, basically)
+### The detector
 
-A stateful tracker, not a per-frame classifier. Three questions in order:
+The old nearest-zone/mask heuristic has been replaced by a stateful 3D model:
 
-1. **Is something there?** Closest valid reading nearer than `trackRange`
-   (default 1500mm) starts a track.
-2. **Is it actually being thrown?** The track must cover `minTravel` zones
-   (default 2) at `minSpeed` zones/sec (default 6). This is what stops a hand
-   reaching into frame from being called a shot -- verified: a hand parked in
-   a basket zone at 250mm for five seconds produces no event.
-3. **Where did the track end?** If any frame had the closest zone inside the
-   basket mask *and* closer than `ringDepth` (default 400mm), it went in.
+1. Median-combine 24 empty-scene frames to remove the static can and room.
+2. Group adjacent zones that move at least 140mm in front of that background.
+3. Convert their angular cells + ranges into a weighted 3D observation.
+4. Enter `TRACKING` on the first observation and emit `target-acquired`.
+5. Fit velocity over three or more observations; a sufficiently fast object
+   emits `inbound` (about 34ms after acquisition at 60Hz in the test path).
+6. Predict and observe the downward crossing of the `y=0` rim plane. A make is
+   a crossing inside the measured opening ellipse with a configurable margin.
 
-Zone travel is Chebyshev distance on the grid, so a diagonal hop counts as one
-zone. A 1.2s refractory gap after each throw keeps a bounce from being counted
-as a second shot.
+This keeps prediction separate from judgment: the interface can show a likely
+intercept early, but the reward requires an observed crossing. A refractory
+gap suppresses bounces. Slow hand motion never reaches projectile speed.
 
 **Three sounds, in the order they fire** (all synthesised with WebAudio -- no
 audio files in the repo, nothing to fetch):
 
 | Event | When | Sound |
 |---|---|---|
-| Inbound | mid-flight, as soon as travel+speed qualify | two-note electronic blip |
-| In | track ended through a basket zone | rising major arpeggio |
-| Miss | track ended without one | descending sawtooth |
+| Inbound | mid-flight, as soon as 3D speed qualifies | two-note electronic blip |
+| In | downward rim-plane crossing inside the aperture | rising major arpeggio |
+| Miss | tracked projectile without an inside crossing | descending sawtooth |
 
-An optional Voice toggle also speaks the result via `speechSynthesis`.
+Each sound has a browser-local sample slot; the synthesised sound is the
+fallback. All events also dispatch as `window` events for external hooks.
 
-### Calibrating the basket zones
+### Calibrating the rig
 
-Click **Set basket zones**, then click cells in the heatmap. Easiest way to
-find the right ones: drop something into the can slowly and watch which cells
-light up close. The mask is stored **per grid resolution** (`captures/detector.json`)
-because zone numbering differs entirely between 4x4 and 8x8 -- a mask
-calibrated at one is meaningless at the other.
-
-Use **⚡ Throw mode** (4x4 at 60Hz) for actual throwing. At 8x8/15Hz an object
-crossing the opening is seen in ~4 frames; at 4x4/60Hz it is ~17.
+Enter the can dimensions and mount height, use the recommended pitch, correct
+X/Y flips, keep the opening empty, and press **Arm system**. The dashboard
+captures the empty-scene baseline automatically. The product mode is 4x4 at
+60Hz; 8x8 remains available for spatial inspection.
 
 ### Labelling and scoring
 
-After each detected throw the frames are held for frame-by-frame scrubbing,
-with **Went in / Missed** buttons. Labels are ground truth, stored in
-`captures/throws/`, and are used to **score the rules** -- the scoreboard shows
-how often the detector agreed with you. Low accuracy means the basket mask or
-`ringDepth` needs adjusting, not that the model needs more data.
+After each detected throw, **Label in / Label miss** saves the recent frame
+window and geometry to `captures/throws/`. The scoreboard compares calls with
+ground truth. Disagreements should first tune geometry, foreground delta,
+minimum speed, or rim margin.
 
 This is deliberately not a learned classifier: with the geometry this
 explicit, a handful of examples is far more useful as a correctness check on
@@ -298,8 +298,9 @@ frame rate being measured.
 `M` exists because RX is polled one byte at a time with no buffer: a burst
 of `+` sent while the MCU is inside `ApplyConfig()` is overrun and lost.
 
-This is bring-up/characterisation code only -- no hit/miss classification
-logic yet.
+The MCU remains a deterministic sensor/transport layer. Classification is in
+the host model until labelled real throws validate it; only then should the
+same state machine be ported to the standalone audio MCU.
 
 ## STM32CubeIDE GUI note (why we went CLI-only)
 
@@ -315,22 +316,12 @@ the STM32F4 MCU package, which may unlock the normal wizard.
 
 ## Next steps
 
-1. **Clip the board to the rim and calibrate the basket zones.** Drop things
-   in slowly and watch which cells light up close. Nothing downstream works
-   until the mask reflects the real mounting -- including which way up the
-   grid reads, which depends on how the board is clipped.
-2. **Throw things and label every call.** Switch to Throw mode (4x4/60Hz),
-   start the detector, throw, label. The scoreboard then tells you whether
-   the geometry is right. Questions the recordings should answer:
-   - Does a made shot reliably register in the mask zones, or can a fast
-     object pass through *between* frames even at 60Hz?
-   - Does a fast/small/dark object return enough signal at all, or do zones
-     go to status 255 (no valid target) exactly when it matters?
-   - Does `ringDepth` cleanly separate "through the opening" from "flew past
-     just above the rim"?
-   - Does a rim bounce produce one track or two?
-3. Tune `ringDepth` / `minSpeed` / the mask from the labelled disagreements,
-   rather than adding model complexity.
+1. **Mount and measure.** Enter opening width/depth and lens height, apply the
+   recommended pitch, then verify X/Y direction in the live 3D view.
+2. **Throw and label at least 30 representative items.** Include makes, near
+   misses, rim hits, slow drops, dark items, and small crumpled paper.
+3. Tune geometry, foreground delta, minimum speed, and rim margin from the
+   labelled disagreements. Track invalid returns separately from bad calls.
 4. Audio playback on-device (I2S DAC, e.g. MAX98357A) once the calls are
    reliable. The sounds currently play in the browser, which is fine for the
    bench rig but not for a standalone clip-on unit.

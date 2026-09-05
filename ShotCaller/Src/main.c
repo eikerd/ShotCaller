@@ -31,10 +31,10 @@ static void ApplyConfig(VL53L5CX_Configuration *dev);
 static void PollCommands(VL53L5CX_Configuration *dev);
 
 /* Live sensor configuration, retunable from the host over UART (see
- * PollCommands). Defaults to 8x8 at its 15Hz ceiling; the host UI switches to
- * 4x4/60Hz when the question is temporal rather than spatial. */
-static uint8_t g_res       = VL53L5CX_RESOLUTION_8X8;
-static uint8_t g_hz        = 15;
+ * PollCommands). The product default is 4x4 at 60Hz: trajectory tracking is
+ * limited by time resolution long before it is limited by zone count. */
+static uint8_t g_res       = VL53L5CX_RESOLUTION_4X4;
+static uint8_t g_hz        = 60;
 static uint8_t g_mode      = VL53L5CX_RANGING_MODE_CONTINUOUS;
 static uint8_t g_streaming = 1;
 /* Tracked because vl53l5cx_stop_ranging() polls for a stop acknowledgement the
@@ -165,13 +165,17 @@ static void ApplyConfig(VL53L5CX_Configuration *dev)
     vl53l5cx_set_resolution(dev, g_res);
     vl53l5cx_set_ranging_frequency_hz(dev, g_hz);
     vl53l5cx_set_ranging_mode(dev, g_mode);
+    /* A small projectile is normally in front of a stronger, static wall or
+     * bin return. Closest-first keeps that projectile in target slot zero,
+     * which is the slot streamed to the host. */
+    vl53l5cx_set_target_order(dev, VL53L5CX_TARGET_ORDER_CLOSEST);
 
     vl53l5cx_start_ranging(dev);
     g_ranging = 1;
 
     int edge = (g_res == VL53L5CX_RESOLUTION_8X8) ? 8 : 4;
     int n = snprintf(frame_buf, sizeof(frame_buf),
-                     "C,res=%d,hz=%u,mode=%s,max_hz=%d\r\n",
+                     "C,res=%d,hz=%u,mode=%s,max_hz=%d,target=closest\r\n",
                      edge, g_hz,
                      (g_mode == VL53L5CX_RANGING_MODE_CONTINUOUS) ? "cont" : "auto",
                      (g_res == VL53L5CX_RESOLUTION_8X8) ? 15 : 60);
