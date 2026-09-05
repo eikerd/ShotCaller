@@ -49,6 +49,111 @@ HISTORY = 1800
 
 THROWS_DIR = os.path.join(REPO, "captures", "throws")
 CONFIG_PATH = os.path.join(REPO, "captures", "detector.json")
+CAPTURES_DIR = os.path.join(REPO, "captures")
+
+
+class SessionRecorder:
+    """Flush every parsed UART event to one append-only NDJSON session."""
+
+    def __init__(self, captures_dir, port, baud, started_at=None):
+        self.started_at = time.time() if started_at is None else started_at
+        self.frames_recorded = 0
+        self.error = None
+        self._lock = threading.Lock()
+        self._file = None
+
+        sessions_dir = os.path.join(captures_dir, "sessions")
+        os.makedirs(sessions_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S",
+                              time.localtime(self.started_at))
+        base = os.path.join(sessions_dir, f"session-{stamp}")
+        for suffix in range(1000):
+            candidate = f"{base}.ndjson" if suffix == 0 else f"{base}-{suffix}.ndjson"
+            try:
+                self._file = open(candidate, "x", encoding="utf-8", buffering=1)
+                self.path = candidate
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OSError(f"cannot allocate a unique session log below {sessions_dir}")
+
+        if not self._write({
+            "type": "session-start",
+            "recorded_at": self.started_at,
+            "schema": 1,
+            "port": port,
+            "baud": baud,
+        }):
+            raise OSError(f"cannot initialize session log: {self.error}")
+
+    def _write(self, record):
+        with self._lock:
+            if self.error is not None or self._file is None:
+                return False
+            try:
+                self._file.write(json.dumps(record, separators=(",", ":")) + "\n")
+                # Deliberately flush every event. A power loss can still affect
+                # the OS cache, but a crash or forced stop will not strand a
+                # throw in Python's userspace buffer.
+                self._file.flush()
+                return True
+            except (OSError, ValueError) as exc:
+                self.error = str(exc)
+                return False
+
+    def record_frame(self, frame):
+        if not self._write({
+            "type": "frame",
+            "recorded_at": time.time(),
+            "frame": frame,
+        }):
+            return False
+        with self._lock:
+            self.frames_recorded += 1
+        return True
+
+    def record_config(self, config):
+        return self._write({
+            "type": "config",
+            "recorded_at": time.time(),
+            "config": config,
+        })
+
+    def record_log(self, text):
+        return self._write({
+            "type": "board-log",
+            "recorded_at": time.time(),
+            "text": text,
+        })
+
+    def status(self):
+        with self._lock:
+            active = (self.error is None and self._file is not None
+                      and not self._file.closed)
+            return {
+                "active": active,
+                "path": os.path.abspath(self.path),
+                "frames_recorded": self.frames_recorded,
+                "started_at": self.started_at,
+                "error": self.error,
+            }
+
+    def close(self):
+        with self._lock:
+            if self._file is None or self._file.closed:
+                return
+            if self.error is None:
+                try:
+                    self._file.write(json.dumps({
+                        "type": "session-end",
+                        "recorded_at": time.time(),
+                        "frames_recorded": self.frames_recorded,
+                    }, separators=(",", ":")) + "\n")
+                    self._file.flush()
+                except (OSError, ValueError) as exc:
+                    self.error = str(exc)
+            self._file.close()
 
 
 # ---- detector calibration -----------------------------------------------
@@ -124,9 +229,10 @@ def autodetect_port():
 class SensorLink:
     """Owns the serial port: parses frames off it, writes commands to it."""
 
-    def __init__(self, port, baud):
+    def __init__(self, port, baud, recorder=None):
         self.port = port
         self.baud = baud
+        self.recorder = recorder
         self.ser = None
         self.lock = threading.Lock()
 
@@ -250,6 +356,12 @@ class SensorLink:
                     self.parse_errors += 1
                     continue
                 self.frames_seen += 1
+                if self.recorder and not self.recorder.record_frame(frame):
+                    self._note(
+                        f"CRITICAL: continuous recorder stopped: "
+                        f"{self.recorder.status()['error']}",
+                        record=False,
+                    )
                 self.history.append(frame)
                 self._publish({"type": "frame", "frame": frame})
             elif line.startswith("C,"):
@@ -259,14 +371,18 @@ class SensorLink:
                         k, v = kv.split("=", 1)
                         cfg[k] = v
                 self.config = cfg
-                self._note(f"config: {line[2:]}")
+                if self.recorder:
+                    self.recorder.record_config(cfg)
+                self._note(f"config: {line[2:]}", record=False)
                 self._publish({"type": "config", "config": cfg})
             else:
                 self._note(line)
 
-    def _note(self, text):
+    def _note(self, text, record=True):
         entry = {"t": time.time(), "text": text}
         self.log.append(entry)
+        if record and self.recorder:
+            self.recorder.record_log(text)
         print(f"[board] {text}", flush=True)
         self._publish({"type": "log", "log": entry})
 
@@ -328,6 +444,8 @@ class Handler(BaseHTTPRequestHandler):
                 "frames_seen": self.link.frames_seen,
                 "parse_errors": self.link.parse_errors,
                 "config": self.link.config,
+                "recording": (self.link.recorder.status()
+                              if self.link.recorder else None),
             }), "application/json")
 
         elif url.path == "/events":
@@ -459,10 +577,16 @@ def main():
         sys.exit("No serial port found. Plug in the Nucleo, or pass --port. "
                  "Check with: ls /dev/cu.usbmodem*")
 
-    link = SensorLink(port, args.baud)
+    try:
+        recorder = SessionRecorder(CAPTURES_DIR, port, args.baud)
+    except OSError as e:
+        sys.exit(f"ERROR starting mandatory continuous recorder: {e}")
+
+    link = SensorLink(port, args.baud, recorder)
     try:
         link.open()
     except serial.SerialException as e:
+        recorder.close()
         sys.exit(f"ERROR opening {port} @ {args.baud}: {e}")
 
     threading.Thread(target=link.reader_loop, daemon=True).start()
@@ -472,12 +596,18 @@ def main():
     httpd.daemon_threads = True
 
     print(f"Serial : {port} @ {args.baud}")
+    print(f"Record : {recorder.path}")
     print(f"Web UI : http://localhost:{args.http_port}")
     print("Ctrl-C to stop.")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nbye")
+    finally:
+        httpd.server_close()
+        if link.ser is not None and link.ser.is_open:
+            link.ser.close()
+        recorder.close()
 
 
 if __name__ == "__main__":
