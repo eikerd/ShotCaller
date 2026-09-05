@@ -168,9 +168,15 @@
   function reflectVelocity(velocity, normal, options) {
     const unitNormal = normalized(normal);
     if (!unitNormal) return { ...velocity, speed: Math.hypot(velocity.x, velocity.y, velocity.z) };
-    const restitution = clamp(Number(options && options.restitution) || 0, 0, 1.2);
+    const configuredRestitution = Number(options && options.restitution);
+    const configuredTangential = Number(options && options.tangentialRetention);
+    const restitution = clamp(
+      Number.isFinite(configuredRestitution) ? configuredRestitution : 0.5,
+      0,
+      1.2,
+    );
     const tangentialRetention = clamp(
-      Number(options && options.tangentialRetention) || 0,
+      Number.isFinite(configuredTangential) ? configuredTangential : 0.9,
       0,
       1,
     );

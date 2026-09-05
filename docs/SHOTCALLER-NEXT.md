@@ -71,6 +71,43 @@ The 45-degree field width at range `d` is approximately
 4x4 cell spans roughly 54 mm. This is why measured can dimensions and a safe
 edge margin matter more than drawing a few hand-picked “basket zones.”
 
+## Ballistic and bank-shot model
+
+Trajectory prediction is piecewise ballistic rather than a single straight
+ray. Between contacts, each axis follows:
+
+```text
+p(t) = p0 + v0*t + 0.5*a*t^2
+```
+
+Earth gravity is the default vertical acceleration. The velocity fit removes
+that known acceleration from the range observations and reports velocity at
+the newest sample, so a rising lob can still be projected through its apex and
+back down to the rim.
+
+A bank surface is a plane described by a point, a normal pointing into free
+space, optional bounds, normal restitution, and tangential retention. The
+solver finds the earliest plane or rim contact, reflects velocity at a plane,
+and continues with a fresh ballistic segment. It accepts arbitrary plane
+normals and multiple surfaces; the dashboard currently exposes the most useful
+physical preset, **Rear wall**, with wall-gap and restitution controls. The 3D
+view renders the registered wall, curved path segments, and an amber contact
+marker. An early `bank-predicted` event is included in the normal event stream.
+
+Restitution is object-dependent: a crumpled paper ball, plastic cup, and rubber
+ball do not leave a wall with the same energy. Treat the coefficient as a
+calibrated class parameter, not a universal constant. The recorded sessions
+must therefore include object type, direct shots, successful banks, failed
+banks, and wall contacts that never return to the sensor's field of view.
+
+The geometry model does not create visibility. With a rear-rim sensor aimed
+across the opening, the actual wall contact may pass behind the lens or through
+an occluded zone. The pre-contact path can predict the bank from the known wall,
+and the sliding velocity window can reacquire the post-contact segment, but
+real logs must establish how many frames survive that gap. A predicted bank may
+trigger an anticipatory sound; it never grants the reward. `in` still requires
+an observed downward crossing inside the safe aperture.
+
 ## Detection pipeline
 
 ```text
@@ -133,15 +170,24 @@ sounds remain the fallback. For the standalone product, map the same event
 names to an audio queue on the MCU. Do not decode audio in the ranging loop;
 enqueue the sample and let DMA/I2S playback run independently.
 
+`bank-predicted` carries the ordered collision list and full piecewise
+trajectory. It is optional in a direct shot, hence the question mark in the
+dashboard event rail:
+
+```text
+target-acquired -> inbound -> bank-predicted? -> rim-crossed -> in/miss
+```
+
 ## What to measure next
 
 The algorithm is unit-tested and the transport is verified, but classification
 accuracy cannot be claimed until the rig is mounted and real throws are
 labelled. Starting the bridge now creates an append-only NDJSON session under
 `captures/sessions/` and flushes every parsed ToF frame, configuration change,
-and board message immediately. The cockpit's green **recording** chip and live
-frame count are the pre-flight check; **Arm system** remains locked if that
-recorder is unavailable.
+and board message immediately. Detector geometry—including wall placement and
+restitution—is timestamped into that same stream whenever it changes. The
+cockpit's green **recording** chip and live frame count are the pre-flight
+check; **Arm system** remains locked if that recorder is unavailable.
 
 Use this sequence:
 
@@ -151,8 +197,9 @@ Use this sequence:
 3. Confirm the green **recording** chip's frame count is advancing. Do not make
    a test throw if it is red or stalled.
 4. Clear the opening and press **Arm system** to capture the baseline.
-5. Record at least 30 throws: made shots, near misses, rim hits, crumpled white
-   paper, dark objects, small objects, and slow drops.
+5. Record at least 30 throws: made shots, near misses, rim hits, direct shots,
+   rear-wall banks, failed banks, crumpled white paper, dark objects, small
+   objects, and slow drops.
 6. Label every outcome in the dashboard. Tune foreground delta, minimum speed,
    rim margin, height, and pitch from disagreements.
 7. Track acquisition latency, false rewards, false misses, and invalid-return
