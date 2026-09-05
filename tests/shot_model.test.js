@@ -160,6 +160,37 @@ test("piecewise ballistic prediction can bank off a rear wall before entering th
   assert.ok(bank.segments.every(segment => segment.path.length > 2));
 });
 
+test("detector exposes one early bank-predicted hook for a wall-bound projectile", () => {
+  const events = [];
+  const gravity = -9810;
+  const detector = new ShotDetector({
+    ...DEFAULT_CONFIG,
+    rearWallBankEnabled: true,
+    rearWallGapMm: 30,
+    minProjectileSpeedMmS: 650,
+    cooldownMs: 0,
+  }, event => events.push(event));
+  detector.start({ calibrate: false });
+
+  [0, 20, 40, 60].forEach(t => {
+    const seconds = t / 1000;
+    detector.ingestObservation({
+      t,
+      point: {
+        x: 0,
+        y: 300 - 500 * seconds + 0.5 * gravity * seconds ** 2,
+        z: -1500 * seconds,
+      },
+      confidence: 0.9,
+    });
+  });
+
+  assert.ok(events.some(event => event.type === "inbound"));
+  const bankEvents = events.filter(event => event.type === "bank-predicted");
+  assert.equal(bankEvents.length, 1);
+  assert.equal(bankEvents[0].collisions[0].surfaceId, "rear-wall");
+});
+
 test("background calibration removes the static scene and isolates a nearer object", () => {
   const projector = new FrameProjector({
     ...DEFAULT_CONFIG,
