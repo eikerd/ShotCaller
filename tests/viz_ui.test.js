@@ -48,3 +48,12 @@ test("synthetic sensor frame makes the detected projectile visible in the raster
   assert.equal(eight.hz, 15);
   assert.ok(eight.d[27] < eight.d[0]);
 });
+
+test("live sensor-mode clicks always expose request, acknowledgment, or failure", () => {
+  assert.match(html, /id="sensorModeStatus"[^>]*aria-live="polite"/);
+  assert.match(html, /function requestSensorMode\(edge\)/);
+  assert.match(html, /REQUESTING.*×.*…/);
+  assert.match(html, /NO SENSOR ACK/);
+  assert.match(html, /function confirmSensorMode\(config\)/);
+  assert.match(html, /payload\.type==="config".*confirmSensorMode\(payload\.config\)/s);
+});
