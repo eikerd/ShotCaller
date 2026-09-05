@@ -31,3 +31,8 @@ test("dashboard never calls an open event stream a live sensor", () => {
   assert.doesNotMatch(html, /events\.onopen=.*linkText.*streaming/);
   assert.match(html, /status\.connected\?"sensor live":"no sensor data"/);
 });
+
+test("dashboard distinguishes a live but disarmed sensor from a dead transport", () => {
+  assert.match(html, /runtime\.connected\?"DISARMED":"SENSOR OFFLINE"/);
+  assert.match(html, /status\.transport/);
+});

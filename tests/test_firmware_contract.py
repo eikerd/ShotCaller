@@ -29,6 +29,14 @@ class FirmwareContractTests(unittest.TestCase):
         self.assertIn('SHOTCALLER_BAUD", "460800"', VIZ_SERVER)
         self.assertIn('SHOTCALLER_BAUD", "460800"', CAPTURE_TOOL)
 
+    def test_every_real_sensor_frame_is_published_to_swd_memory(self):
+        self.assertRegex(SOURCE, r"volatile\s+SwdFrame\s+g_swd_frame")
+        self.assertRegex(
+            SOURCE,
+            r"PublishSwdFrame\(&results,\s*frame_id\).*?"
+            r"StreamFrame\(&results,\s*frame_id\)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,6 +101,18 @@ class SensorLinkStatusTests(unittest.TestCase):
         self.assertTrue(link.status(now=100.0)["connected"])
         self.assertFalse(link.status(now=102.0)["connected"])
 
+    def test_swd_frames_are_live_even_when_the_virtual_serial_port_is_silent(self):
+        link = viz_server.SensorLink("/dev/test-shotcaller", 460800)
+        link.ser = SimpleNamespace(is_open=True)
+
+        link.accept_frame({"id": 7}, transport="swd", received_at=100.0)
+
+        status = link.status(now=100.5)
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["transport"], "swd")
+        self.assertEqual(link.frames_seen, 1)
+        self.assertEqual(list(link.history), [{"id": 7}])
+
 
 if __name__ == "__main__":
     unittest.main()
