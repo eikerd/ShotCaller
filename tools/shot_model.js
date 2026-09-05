@@ -635,6 +635,7 @@
           inboundAt: null,
           crossing: null,
           prediction: null,
+          bankPredictedAt: null,
           velocity: null,
           peakSpeed: 0,
           minDistance: Infinity,
@@ -670,6 +671,16 @@
               latencyMs: now - track.t0,
               velocity: track.velocity,
               prediction: track.prediction,
+              track,
+            });
+          }
+          if (track.projectile && track.bankPredictedAt == null
+              && track.prediction && track.prediction.collisions.length) {
+            track.bankPredictedAt = now;
+            this._emit("bank-predicted", {
+              t: now,
+              prediction: track.prediction,
+              collisions: track.prediction.collisions,
               track,
             });
           }
