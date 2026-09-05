@@ -118,6 +118,13 @@ class SessionRecorder:
             "config": config,
         })
 
+    def record_detector_config(self, config):
+        return self._write({
+            "type": "detector-config",
+            "recorded_at": time.time(),
+            "config": config,
+        })
+
     def record_log(self, text):
         return self._write({
             "type": "board-log",
@@ -500,6 +507,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/config":
             save_config(payload)
+            if self.link.recorder:
+                self.link.recorder.record_detector_config(payload)
             self._send(200, json.dumps({"saved": True}), "application/json")
             return
 
