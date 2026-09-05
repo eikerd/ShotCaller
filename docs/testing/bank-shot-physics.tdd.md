@@ -34,6 +34,21 @@ Checkpoint commits:
 - Session-config RED: `6a948e7 test: require physics config in session logs`
 - Session-config GREEN: `7adf430 feat: timestamp physics config in sensor sessions`
 
+## Verification
+
+- `node --test --experimental-test-coverage tests/shot_model.test.js` passed
+  12/12 tests. `tools/shot_model.js` measured 95.06% line, 78.68% branch,
+  and 86.30% function coverage; aggregate coverage remained above 80% on all
+  reported axes.
+- The dashboard's inline JavaScript compiled, and the deterministic bank QA
+  view rendered the rear-wall plane, curved segments, contact marker, bank
+  count, and `bank-predicted` trace without visible layout breakage.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_viz_server` passed
+  3/3 tests.
+- Against the live 4x4/60 Hz rig, recorded frames advanced in lockstep with
+  parsed frames, parse errors remained zero, and the session contained the
+  unchanged detector configuration posted through `/config`.
+
 ## Known physical gap
 
 These are analytic and synthetic guarantees, not evidence that the single ToF
