@@ -1,0 +1,27 @@
+import pathlib
+import re
+import unittest
+
+
+SOURCE = pathlib.Path("ShotCaller/Src/main.c").read_text(encoding="utf-8")
+
+
+class FirmwareContractTests(unittest.TestCase):
+    def test_starts_in_8x8_at_15_hz(self):
+        self.assertRegex(
+            SOURCE,
+            r"static\s+uint8_t\s+g_res\s*=\s*VL53L5CX_RESOLUTION_8X8",
+        )
+        self.assertRegex(SOURCE, r"static\s+uint8_t\s+g_hz\s*=\s*15")
+
+    def test_range_read_failures_trigger_sensor_recovery(self):
+        self.assertRegex(
+            SOURCE,
+            r"status\s*=\s*vl53l5cx_get_ranging_data",
+        )
+        self.assertRegex(SOURCE, r"RecoverSensor\(&dev\)")
+        self.assertRegex(SOURCE, r"E,sensor-read,status=%u")
+
+
+if __name__ == "__main__":
+    unittest.main()
