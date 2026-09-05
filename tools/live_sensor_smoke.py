@@ -22,7 +22,7 @@ def evaluate(before, after, expected_edge):
     before_recording = before.get("recording") or {}
 
     if not after.get("connected"):
-        failures.append("serial bridge is disconnected")
+        failures.append("real sensor stream is disconnected")
     if config.get("res") != expected:
         failures.append(
             f"expected {expected}x{expected}, got {config.get('res') or 'no config'}"

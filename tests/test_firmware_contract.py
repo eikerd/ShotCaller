@@ -33,7 +33,7 @@ class FirmwareContractTests(unittest.TestCase):
         self.assertRegex(SOURCE, r"volatile\s+SwdFrame\s+g_swd_frame")
         self.assertRegex(
             SOURCE,
-            r"PublishSwdFrame\(&results,\s*frame_id\).*?"
+            r"(?s)PublishSwdFrame\(&results,\s*frame_id\).*?"
             r"StreamFrame\(&results,\s*frame_id\)",
         )
 

@@ -27,6 +27,7 @@ static void MX_USART2_UART_Init(void);
 static void VL53_PowerUp(void);
 static void I2C_BusScan(void);
 static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id);
+static void PublishSwdFrame(VL53L5CX_ResultsData *r, uint32_t frame_id);
 static uint8_t ApplyConfig(VL53L5CX_Configuration *dev);
 static uint8_t RecoverSensor(VL53L5CX_Configuration *dev);
 static void PollCommands(VL53L5CX_Configuration *dev);
@@ -44,6 +45,30 @@ static uint8_t g_streaming = 1;
  * (vl53l5cx_api.c:642) on every such call -- including the very first config
  * apply at boot. */
 static uint8_t g_ranging   = 0;
+
+/* Live debugger fallback. The on-board ST-LINK can read SRAM through SWD even
+ * when its separate virtual COM interface is unhealthy. Sequence fields form
+ * a seqlock, allowing the host to reject a frame read while this is changing. */
+#define SWD_FRAME_MAGIC 0x544F4853UL
+typedef struct {
+    uint32_t sequence;
+    uint32_t frame_id;
+    uint32_t tick_ms;
+    uint8_t edge;
+    uint8_t hz;
+    uint16_t zones;
+    uint8_t distance_q16[64];
+    uint32_t sequence_end;
+} SwdFrameSlot;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t write_count;
+    SwdFrameSlot slots[32];
+} SwdFrame;
+
+_Static_assert(sizeof(SwdFrameSlot) == 84, "host SWD slot layout changed");
+volatile SwdFrame g_swd_frame __attribute__((used, aligned(4)));
 
 int __io_putchar(int ch)
 {
@@ -97,9 +122,11 @@ int main(void)
                 }
                 continue;
             }
+            PublishSwdFrame(&results, frame_id);
             if (g_streaming) {
-                StreamFrame(&results, frame_id++);
+                StreamFrame(&results, frame_id);
             }
+            frame_id++;
             HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
         }
 
@@ -151,6 +178,40 @@ static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id)
 
     n += snprintf(frame_buf + n, sizeof(frame_buf) - n, "\r\n");
     UartWrite(frame_buf, n);
+}
+
+static void PublishSwdFrame(VL53L5CX_ResultsData *r, uint32_t frame_id)
+{
+    int zones = (g_res == VL53L5CX_RESOLUTION_8X8) ? 64 : 16;
+    uint32_t write_count = g_swd_frame.write_count;
+    volatile SwdFrameSlot *slot = &g_swd_frame.slots[write_count % 32U];
+    uint32_t writing = slot->sequence + 1U;
+    if ((writing & 1U) == 0U) writing++;
+
+    slot->sequence = writing;
+    __DMB();
+    g_swd_frame.magic = SWD_FRAME_MAGIC;
+    slot->frame_id = frame_id;
+    slot->tick_ms = HAL_GetTick();
+    slot->edge = (zones == 64) ? 8 : 4;
+    slot->hz = g_hz;
+    slot->zones = (uint16_t)zones;
+    for (int i = 0; i < zones; i++) {
+        int idx = VL53L5CX_NB_TARGET_PER_ZONE * i;
+        int distance = r->distance_mm[idx];
+        uint8_t status = r->target_status[idx];
+        if ((status == 5U || status == 9U) && distance >= 0 && distance < 4072) {
+            slot->distance_q16[i] = (uint8_t)((distance + 8) / 16);
+        } else {
+            slot->distance_q16[i] = 0xFFU;
+        }
+    }
+    __DMB();
+    slot->sequence_end = writing + 1U;
+    __DMB();
+    slot->sequence = writing + 1U;
+    __DMB();
+    g_swd_frame.write_count = write_count + 1U;
 }
 
 /* Reconfigure and (re)start ranging. Ranging must be stopped before

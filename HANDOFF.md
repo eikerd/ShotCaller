@@ -5,13 +5,14 @@ rim classifies thrown objects as "in" vs "miss" and triggers audio samples.
 Long-term target is a standalone ESP32 build; current phase is bring-up on
 an STM32 Nucleo bench rig to validate the sensor before porting.
 
-**Status: the live transport is currently blocked.** Firmware builds, flashes,
-and produces real 8x8 frames inside the MCU, but the ST-LINK virtual COM port
-currently delivers zero bytes in either direction. The dashboard correctly
-shows `NO SENSOR DATA`; it contains no simulated-throw path. The exact older
-firmware from the last successful capture also failed after rebuild/reflash,
-isolating the current failure to the VCP path. See `docs/SHOTCALLER-NEXT.md`
-for evidence and the geometry/algorithm design.
+**Status: real 8x8 frames are live and continuously recorded through an SWD
+fallback.** The ST-LINK virtual COM port still delivers zero bytes, so firmware
+also publishes each real VL53L5CX result into a compact SRAM ring that the host
+reads through the working debug endpoint. The dashboard contains no simulated
+throw path and distinguishes `DISARMED` from `SENSOR OFFLINE`. SWD currently
+delivers about 3.4 UI frames/s; restoring VCP or using an external UART remains
+necessary for full-rate projectile tracking. See `docs/SHOTCALLER-NEXT.md` for
+evidence and the geometry/algorithm design.
 
 ## Hardware
 

@@ -218,10 +218,13 @@ software tuning has reached the limit of the single-sensor geometry.
   sensor power-cycle/reinitialization after I2C read errors.
 - Sensor-side proof: a debugger reached `StreamFrame` with real frame id 34,
   8x8 ranging active, and `HAL_UART_Transmit` returning `HAL_OK`.
-- Current end-to-end result: **not live**. The ST-LINK virtual serial port is
-  open but is delivering zero bytes in either direction, so the 13:01 live
-  smoke test recorded zero frames. The dashboard reports `NO SENSOR DATA`
-  instead of treating an open port as a working sensor.
+- Current end-to-end result: **live through SWD fallback**. The virtual serial
+  port still delivers zero bytes, but firmware publishes a compact 32-slot
+  SRAM ring and the host reads real 8x8 frames through the ST-LINK debugger.
+  A five-second physical gate advanced both the live and append-only recording
+  counters by 17 frames with zero parse errors. The old probe limits dashboard
+  delivery to about 3.4 frames/s, so this validates field of view and hand
+  motion but is not the final transport for projectile-speed tracking.
 - Last known successful transport capture: the archived 4x4/60 Hz session at
   `captures/sessions/session-20260905-054301.ndjson.gz` contains real range
   frames from the same `/dev/cu.usbmodem11203` port.
