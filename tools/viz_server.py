@@ -30,6 +30,7 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from urllib.parse import urlparse, parse_qs
 
 try:
@@ -270,11 +271,27 @@ class SensorLink:
         self._publish({"type": "log", "log": entry})
 
 
+class LocalThreadingHTTPServer(ThreadingHTTPServer):
+    """Loopback HTTP server that never blocks startup on reverse DNS."""
+
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class Handler(BaseHTTPRequestHandler):
     link = None  # set on the class before serving
 
     def log_message(self, fmt, *args):
         pass  # the board's own log is the interesting one
+
+    def handle(self):
+        # Browsers routinely reset a keep-alive or SSE socket when a tab closes.
+        # That is transport cleanup, not a server fault worth a traceback.
+        try:
+            super().handle()
+        except ConnectionResetError:
+            pass
 
     def _send(self, code, body, ctype="text/plain; charset=utf-8"):
         if isinstance(body, str):
@@ -295,6 +312,23 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError as e:
                 self._send(500, f"cannot read viz.html: {e}")
+
+        elif url.path == "/shot_model.js":
+            try:
+                with open(os.path.join(HERE, "shot_model.js"), "rb") as f:
+                    self._send(200, f.read(), "text/javascript; charset=utf-8")
+            except OSError as e:
+                self._send(500, f"cannot read shot_model.js: {e}")
+
+        elif url.path == "/api/status":
+            self._send(200, json.dumps({
+                "connected": self.link.ser is not None and self.link.ser.is_open,
+                "port": self.link.port,
+                "baud": self.link.baud,
+                "frames_seen": self.link.frames_seen,
+                "parse_errors": self.link.parse_errors,
+                "config": self.link.config,
+            }), "application/json")
 
         elif url.path == "/events":
             self.stream_events()
@@ -434,7 +468,7 @@ def main():
     threading.Thread(target=link.reader_loop, daemon=True).start()
 
     Handler.link = link
-    httpd = ThreadingHTTPServer(("127.0.0.1", args.http_port), Handler)
+    httpd = LocalThreadingHTTPServer(("127.0.0.1", args.http_port), Handler)
     httpd.daemon_threads = True
 
     print(f"Serial : {port} @ {args.baud}")
