@@ -5,7 +5,14 @@ rim classifies thrown objects as "in" vs "miss" and triggers audio samples.
 Long-term target is a standalone ESP32 build; current phase is bring-up on
 an STM32 Nucleo bench rig to validate the sensor before porting.
 
-**Status: real 8x8 frames are live and continuously recorded through an SWD
+**Direction as of 2026-09-06: the product moves off the Nucleo and off the
+browser.** Detection will run on-device (Raspberry Pi Zero 2 W first, ESP32-S3
+second) from one shared C core, with a single tiltable time-of-flight sensor
+for tracking and a GPIO break-beam for confirmation. The browser becomes a
+thin tuning client. Everything below describes the bench rig that stays as
+the reference. The plan is `docs/STANDALONE-PLAN.md`.
+
+**Bench status: real 8x8 frames are live and continuously recorded through an SWD
 fallback.** The ST-LINK virtual COM port still delivers zero bytes, so firmware
 also publishes each real VL53L5CX result into a compact SRAM ring that the host
 reads through the working debug endpoint. The dashboard contains no simulated

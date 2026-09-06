@@ -14,11 +14,15 @@ lab; the eventual product is a compact clip-on sensor and audio device.
 - `tools/shot_model.js`: testable geometry and detector state machine.
 - `tools/viz_server.py`: serial-to-SSE bridge and local persistence API.
 - `tools/viz.html`: dependency-free 3D trajectory dashboard.
+- `tools/throw_sim.js`: physics and sensor simulation that feeds synthetic
+  throws through the real detector; see `docs/STANDALONE-PLAN.md` section 13.
 - `tests/`: Node test-runner coverage for the detector model.
 - `captures/`: local ignored calibration and labelled-throw data.
 
 Read `docs/CODEX-NAVIGATION-GUIDE.md` and `docs/SHOTCALLER-NEXT.md` before a
-cross-layer feature.
+cross-layer feature. Read `docs/STANDALONE-PLAN.md` before any work on the
+untethered device: it holds the owner's decisions, the physics, the C core
+contract, the device API, and the build order.
 
 ## Commands
 

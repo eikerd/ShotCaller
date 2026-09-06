@@ -8,3 +8,6 @@ captures/
 *.bin
 *.map
 __pycache__/
+
+# agent-authored notes and scratch artifacts (see ~/.claude/CLAUDE.md)
+tmp/
