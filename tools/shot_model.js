@@ -28,6 +28,12 @@
     flipX: false,
     flipY: false,
     rimMarginMm: 18,
+    gravityMmS2: -9810,
+    rearWallBankEnabled: false,
+    rearWallGapMm: 30,
+    rearWallRestitution: 0.5,
+    rearWallTangentialRetention: 0.9,
+    maxBankBounces: 2,
     baselineFrames: 24,
     foregroundDeltaMm: 140,
     trackRangeMm: 1800,
@@ -40,6 +46,17 @@
 
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const radians = degrees => degrees * Math.PI / 180;
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+  function normalized(vector) {
+    const magnitude = Math.hypot(vector.x, vector.y, vector.z);
+    if (!Number.isFinite(magnitude) || magnitude <= 0) return null;
+    return {
+      x: vector.x / magnitude,
+      y: vector.y / magnitude,
+      z: vector.z / magnitude,
+    };
+  }
 
   function configWithDefaults(config) {
     return { ...DEFAULT_CONFIG, ...(config || {}) };
@@ -89,26 +106,267 @@
     };
   }
 
-  function estimateVelocity(samples) {
+  function accelerationForConfig(config) {
+    const cfg = configWithDefaults(config);
+    if (cfg.accelerationMmS2 && typeof cfg.accelerationMmS2 === "object") {
+      return {
+        x: Number(cfg.accelerationMmS2.x) || 0,
+        y: Number(cfg.accelerationMmS2.y) || 0,
+        z: Number(cfg.accelerationMmS2.z) || 0,
+      };
+    }
+    return { x: 0, y: Number(cfg.gravityMmS2) || 0, z: 0 };
+  }
+
+  function estimateVelocity(samples, acceleration) {
     if (!samples || samples.length < 2) return null;
-    const meanT = samples.reduce((sum, sample) => sum + sample.t, 0) / samples.length;
-    const denominator = samples.reduce((sum, sample) => {
-      const dt = sample.t - meanT;
+    const accel = acceleration || { x: 0, y: 0, z: 0 };
+    const referenceT = samples.at(-1).t;
+    const prepared = samples.map(sample => ({
+      ...sample,
+      dt: (sample.t - referenceT) / 1000,
+    }));
+    const meanT = prepared.reduce((sum, sample) => sum + sample.dt, 0) / prepared.length;
+    const denominator = prepared.reduce((sum, sample) => {
+      const dt = sample.dt - meanT;
       return sum + dt * dt;
     }, 0);
     if (denominator <= 0) return null;
 
     function slope(axis) {
-      const mean = samples.reduce((sum, sample) => sum + sample.point[axis], 0) / samples.length;
-      const numerator = samples.reduce((sum, sample) => (
-        sum + (sample.t - meanT) * (sample.point[axis] - mean)
+      const corrected = prepared.map(sample => (
+        sample.point[axis] - 0.5 * (accel[axis] || 0) * sample.dt ** 2
+      ));
+      const mean = corrected.reduce((sum, value) => sum + value, 0) / corrected.length;
+      const numerator = prepared.reduce((sum, sample, index) => (
+        sum + (sample.dt - meanT) * (corrected[index] - mean)
       ), 0);
-      return numerator / denominator * 1000;
+      return numerator / denominator;
     }
 
     const velocity = { x: slope("x"), y: slope("y"), z: slope("z") };
     velocity.speed = Math.hypot(velocity.x, velocity.y, velocity.z);
     return velocity;
+  }
+
+  function pointAtTime(point, velocity, acceleration, seconds) {
+    return {
+      x: point.x + velocity.x * seconds + 0.5 * acceleration.x * seconds ** 2,
+      y: point.y + velocity.y * seconds + 0.5 * acceleration.y * seconds ** 2,
+      z: point.z + velocity.z * seconds + 0.5 * acceleration.z * seconds ** 2,
+    };
+  }
+
+  function velocityAtTime(velocity, acceleration, seconds) {
+    return {
+      x: velocity.x + acceleration.x * seconds,
+      y: velocity.y + acceleration.y * seconds,
+      z: velocity.z + acceleration.z * seconds,
+    };
+  }
+
+  function reflectVelocity(velocity, normal, options) {
+    const unitNormal = normalized(normal);
+    if (!unitNormal) return { ...velocity, speed: Math.hypot(velocity.x, velocity.y, velocity.z) };
+    const configuredRestitution = Number(options && options.restitution);
+    const configuredTangential = Number(options && options.tangentialRetention);
+    const restitution = clamp(
+      Number.isFinite(configuredRestitution) ? configuredRestitution : 0.5,
+      0,
+      1.2,
+    );
+    const tangentialRetention = clamp(
+      Number.isFinite(configuredTangential) ? configuredTangential : 0.9,
+      0,
+      1,
+    );
+    const normalSpeed = dot(velocity, unitNormal);
+    const normalVelocity = {
+      x: unitNormal.x * normalSpeed,
+      y: unitNormal.y * normalSpeed,
+      z: unitNormal.z * normalSpeed,
+    };
+    const reflected = {
+      x: (velocity.x - normalVelocity.x) * tangentialRetention - normalVelocity.x * restitution,
+      y: (velocity.y - normalVelocity.y) * tangentialRetention - normalVelocity.y * restitution,
+      z: (velocity.z - normalVelocity.z) * tangentialRetention - normalVelocity.z * restitution,
+    };
+    reflected.speed = Math.hypot(reflected.x, reflected.y, reflected.z);
+    return reflected;
+  }
+
+  function configuredSurfaces(config) {
+    const cfg = configWithDefaults(config);
+    const custom = Array.isArray(cfg.collisionSurfaces)
+      ? cfg.collisionSurfaces.filter(surface => surface && surface.enabled !== false)
+      : [];
+    const surfaces = custom.slice();
+    if (cfg.rearWallBankEnabled) {
+      surfaces.unshift({
+        id: "rear-wall",
+        point: {
+          x: 0,
+          y: 0,
+          z: -cfg.canDepthMm / 2 - cfg.sensorSetbackMm - cfg.rearWallGapMm,
+        },
+        normal: { x: 0, y: 0, z: 1 },
+        bounds: { y: [0, Infinity] },
+        restitution: cfg.rearWallRestitution,
+        tangentialRetention: cfg.rearWallTangentialRetention,
+      });
+    }
+    return surfaces;
+  }
+
+  function withinSurfaceBounds(point, bounds) {
+    if (!bounds) return true;
+    return ["x", "y", "z"].every(axis => {
+      const range = bounds[axis];
+      return !range || (point[axis] >= range[0] - 0.01 && point[axis] <= range[1] + 0.01);
+    });
+  }
+
+  function intersectPlane(point, velocity, acceleration, surface, horizonSeconds) {
+    const normal = normalized(surface.normal || {});
+    const planePoint = surface.point || { x: 0, y: 0, z: 0 };
+    if (!normal) return null;
+    const relative = {
+      x: point.x - planePoint.x,
+      y: point.y - planePoint.y,
+      z: point.z - planePoint.z,
+    };
+    const a = 0.5 * dot(acceleration, normal);
+    const b = dot(velocity, normal);
+    const c = dot(relative, normal);
+    let roots = [];
+    if (Math.abs(a) < 1e-9) {
+      if (Math.abs(b) < 1e-9) return null;
+      roots = [-c / b];
+    } else {
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant < 0) return null;
+      const root = Math.sqrt(discriminant);
+      roots = [(-b - root) / (2 * a), (-b + root) / (2 * a)];
+    }
+    roots.sort((left, right) => left - right);
+    for (const seconds of roots) {
+      if (seconds <= 1e-6 || seconds > horizonSeconds) continue;
+      const hitPoint = pointAtTime(point, velocity, acceleration, seconds);
+      const hitVelocity = velocityAtTime(velocity, acceleration, seconds);
+      if (dot(hitVelocity, normal) >= -1e-6) continue;
+      if (!withinSurfaceBounds(hitPoint, surface.bounds)) continue;
+      return { seconds, point: hitPoint, velocity: hitVelocity, normal };
+    }
+    return null;
+  }
+
+  function pathForSegment(point, velocity, acceleration, seconds) {
+    const steps = Math.max(3, Math.min(16, Math.ceil(seconds * 1000 / 20)));
+    return Array.from({ length: steps + 1 }, (_, index) => (
+      pointAtTime(point, velocity, acceleration, seconds * index / steps)
+    ));
+  }
+
+  function predictTrajectory(point, velocity, config, surfaces) {
+    const cfg = configWithDefaults(config);
+    const acceleration = accelerationForConfig(cfg);
+    const collisionSurfaces = surfaces || configuredSurfaces(cfg);
+    const horizonSeconds = Math.max(0, cfg.predictionHorizonMs) / 1000;
+    const maxBounces = Math.max(0, Math.round(cfg.maxBankBounces));
+    const rimSurface = {
+      id: "rim-plane",
+      point: { x: 0, y: 0, z: 0 },
+      normal: { x: 0, y: 1, z: 0 },
+    };
+    const result = {
+      model: "piecewise-ballistic",
+      acceleration,
+      segments: [],
+      collisions: [],
+      intercept: null,
+    };
+    if (!point || !velocity || horizonSeconds <= 0) return result;
+
+    let currentPoint = { ...point };
+    let currentVelocity = { ...velocity };
+    let elapsed = 0;
+    let bounces = 0;
+    while (elapsed < horizonSeconds) {
+      const remaining = horizonSeconds - elapsed;
+      const candidates = [];
+      const rimHit = intersectPlane(
+        currentPoint,
+        currentVelocity,
+        acceleration,
+        rimSurface,
+        remaining,
+      );
+      if (rimHit) candidates.push({ ...rimHit, type: "rim", surface: rimSurface });
+      if (bounces < maxBounces) {
+        collisionSurfaces.forEach(surface => {
+          const hit = intersectPlane(
+            currentPoint,
+            currentVelocity,
+            acceleration,
+            surface,
+            remaining,
+          );
+          if (hit) candidates.push({ ...hit, type: "collision", surface });
+        });
+      }
+      candidates.sort((left, right) => left.seconds - right.seconds);
+      const next = candidates[0];
+      const duration = next ? next.seconds : remaining;
+      const endPoint = next
+        ? next.point
+        : pointAtTime(currentPoint, currentVelocity, acceleration, duration);
+      result.segments.push({
+        startMs: Math.round(elapsed * 1000),
+        endMs: Math.round((elapsed + duration) * 1000),
+        from: { ...currentPoint },
+        to: { ...endPoint },
+        path: pathForSegment(currentPoint, currentVelocity, acceleration, duration),
+        endReason: next ? next.type : "horizon",
+        surfaceId: next && next.surface.id,
+      });
+      elapsed += duration;
+      if (!next) break;
+
+      if (next.type === "rim") {
+        const rim = pointInsideRim(next.point, cfg);
+        result.intercept = {
+          point: { ...next.point, y: 0 },
+          velocity: next.velocity,
+          tMs: Math.round(elapsed * 1000),
+          inside: rim.inside,
+          normalized: rim.normalized,
+          clearance: rim.clearance,
+        };
+        break;
+      }
+
+      const outgoingVelocity = reflectVelocity(
+        next.velocity,
+        next.normal,
+        next.surface,
+      );
+      result.collisions.push({
+        surfaceId: next.surface.id || `surface-${bounces + 1}`,
+        tMs: Math.round(elapsed * 1000),
+        point: next.point,
+        normal: next.normal,
+        incomingVelocity: next.velocity,
+        outgoingVelocity,
+      });
+      currentPoint = {
+        x: next.point.x + next.normal.x * 0.01,
+        y: next.point.y + next.normal.y * 0.01,
+        z: next.point.z + next.normal.z * 0.01,
+      };
+      currentVelocity = outgoingVelocity;
+      bounces += 1;
+    }
+    return result;
   }
 
   function pointInsideRim(point, config) {
@@ -120,22 +378,14 @@
   }
 
   function predictRimIntercept(point, velocity, config) {
-    const cfg = configWithDefaults(config);
-    if (!point || !velocity || velocity.y >= -1) return null;
-    const seconds = -point.y / velocity.y;
-    if (seconds < 0 || seconds * 1000 > cfg.predictionHorizonMs) return null;
-    const intercept = {
-      x: point.x + velocity.x * seconds,
-      y: 0,
-      z: point.z + velocity.z * seconds,
-    };
-    const rim = pointInsideRim(intercept, cfg);
+    const trajectory = predictTrajectory(point, velocity, config);
+    if (!trajectory.intercept) return null;
     return {
-      point: intercept,
-      tMs: Math.round(seconds * 1000),
-      inside: rim.inside,
-      normalized: rim.normalized,
-      clearance: rim.clearance,
+      ...trajectory.intercept,
+      model: trajectory.model,
+      acceleration: trajectory.acceleration,
+      segments: trajectory.segments,
+      collisions: trajectory.collisions,
     };
   }
 
@@ -403,6 +653,7 @@
           inboundAt: null,
           crossing: null,
           prediction: null,
+          bankPredictedAt: null,
           velocity: null,
           peakSpeed: 0,
           minDistance: Infinity,
@@ -423,7 +674,10 @@
       const cutoff = now - this.config.velocityWindowMs;
       const velocitySamples = track.samples.filter(sample => sample.t >= cutoff);
       if (velocitySamples.length >= 3) {
-        track.velocity = estimateVelocity(velocitySamples);
+        track.velocity = estimateVelocity(
+          velocitySamples,
+          accelerationForConfig(this.config),
+        );
         if (track.velocity) {
           track.peakSpeed = Math.max(track.peakSpeed, track.velocity.speed);
           track.prediction = predictRimIntercept(observation.point, track.velocity, this.config);
@@ -435,6 +689,16 @@
               latencyMs: now - track.t0,
               velocity: track.velocity,
               prediction: track.prediction,
+              track,
+            });
+          }
+          if (track.projectile && track.bankPredictedAt == null
+              && track.prediction && track.prediction.collisions.length) {
+            track.bankPredictedAt = now;
+            this._emit("bank-predicted", {
+              t: now,
+              prediction: track.prediction,
+              collisions: track.prediction.collisions,
               track,
             });
           }
@@ -502,10 +766,14 @@
     VALID_STATUSES,
     FrameProjector,
     ShotDetector,
+    accelerationForConfig,
+    configuredSurfaces,
     estimateVelocity,
     pointInsideRim,
+    predictTrajectory,
     predictRimIntercept,
     recommendedPitchDeg,
+    reflectVelocity,
     segmentRimCrossing,
     sensorRayForZone,
     zoneToWorld,

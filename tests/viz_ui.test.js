@@ -56,3 +56,73 @@ test("RECAL is gated on the recorder, exactly like ARM", () => {
       + "ARMED, bypassing the ARM guard entirely",
   );
 });
+
+test("physics reaches the session log before it reaches the detector", () => {
+  // The session log's claim is that it can say which physics produced each
+  // prediction. Applying a change to the live detector and recording it 300 ms
+  // later, best-effort, breaks exactly that.
+  assert.match(
+    html,
+    /async function recordAndApplyConfig\(\)/,
+    "config changes must go through one path that records before applying",
+  );
+  assert.match(
+    html,
+    /await fetch\("\/config",\{method:"POST"[\s\S]{0,400}?runtime\.detector\.setConfig/,
+    "setConfig must come after the awaited POST, not before it",
+  );
+  assert.doesNotMatch(
+    html,
+    /setTimeout\(\(\)=>fetch\("\/config"/,
+    "the debounced fire-and-forget save let the detector run physics the log "
+      + "had not yet recorded",
+  );
+});
+
+test("a physics change that was not recorded is surfaced, not swallowed", () => {
+  assert.doesNotMatch(
+    html,
+    /fetch\("\/config",\{method:"POST"[\s\S]{0,300}?\}\)\.catch\(\(\)=>\{\}\)/,
+    "a failed config POST was silently discarded",
+  );
+  assert.match(
+    html,
+    /result\.recorded===false|!response\.ok/,
+    "the server now reports whether the recorder captured the config; the "
+      + "dashboard must act on that",
+  );
+});
+
+test("demo paths use the same record-before-apply flow as the controls", () => {
+  // A demo flips rear-wall bank on the live config. Applying it synchronously
+  // and recording it afterwards publishes bank predictions under physics the
+  // log has not captured -- the same hole the controls just had.
+  assert.doesNotMatch(
+    html,
+    /syncControls\(\);runtime\.detector\.setConfig\(runtime\.config\);saveConfig\(\)/,
+    "demos must not apply physics ahead of the record",
+  );
+  assert.match(
+    html,
+    /await recordAndApplyConfig\(\)/,
+    "demo activation and restoration must await the record-before-apply path",
+  );
+});
+
+test("the dashboard's script block actually parses", () => {
+  // Regex assertions over the source cannot see a syntax error, and a syntax
+  // error in this page's single script block stops the whole dashboard from
+  // initialising. Parse it for real.
+  const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1]);
+  assert.ok(blocks.length > 0, "viz.html must carry an inline script block");
+
+  blocks.forEach((source, index) => {
+    assert.doesNotThrow(
+      // Wrapped as a module body so top-level await, import and export parse
+      // the way the browser would treat them.
+      () => new Function(`return async()=>{${source}\n}`),
+      `inline script block ${index} does not parse`,
+    );
+  });
+});

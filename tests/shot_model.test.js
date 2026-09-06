@@ -8,9 +8,12 @@ const {
   STATES,
   FrameProjector,
   ShotDetector,
+  configuredSurfaces,
   estimateVelocity,
+  predictTrajectory,
   predictRimIntercept,
   recommendedPitchDeg,
+  reflectVelocity,
   zoneToWorld,
 } = require("../tools/shot_model.js");
 
@@ -59,6 +62,28 @@ test("velocity uses a least-squares fit instead of a noisy last-frame delta", ()
   assert.ok(velocity.speed > 1200);
 });
 
+test("velocity fitting removes known gravity and reports velocity at the latest sample", () => {
+  const gravity = { x: 0, y: -9810, z: 0 };
+  const initial = { x: 250, y: -500, z: -700 };
+  const samples = [0, 20, 40, 60].map(t => {
+    const seconds = t / 1000;
+    return {
+      t,
+      point: {
+        x: initial.x * seconds,
+        y: 240 + initial.y * seconds + 0.5 * gravity.y * seconds ** 2,
+        z: initial.z * seconds,
+      },
+    };
+  });
+
+  const velocity = estimateVelocity(samples, gravity);
+
+  assert.ok(Math.abs(velocity.x - 250) < 1);
+  assert.ok(Math.abs(velocity.y - (initial.y + gravity.y * 0.06)) < 1);
+  assert.ok(Math.abs(velocity.z + 700) < 1);
+});
+
 test("rim intercept distinguishes a center make from an outside miss", () => {
   const geometry = {
     ...DEFAULT_CONFIG,
@@ -78,13 +103,92 @@ test("rim intercept distinguishes a center make from an outside miss", () => {
   );
 
   assert.equal(make.inside, true);
-  assert.equal(make.tMs, 100);
+  assert.ok(make.tMs < 80, "gravity should bend the path to the rim sooner than a linear extrapolation");
+  assert.equal(make.model, "piecewise-ballistic");
   assert.equal(miss.inside, false);
-  assert.equal(predictRimIntercept(
+  const lob = predictRimIntercept(
     { x: 0, y: 100, z: 0 },
     { x: 0, y: 100, z: 0 },
     geometry,
-  ), null);
+  );
+  assert.ok(lob, "an initially rising lob should still arc downward through the rim plane");
+  assert.equal(lob.inside, true);
+});
+
+test("reflection works for an arbitrary plane normal and preserves configurable tangential motion", () => {
+  const normal = { x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 };
+  const incoming = { x: -800, y: -500, z: -600 };
+  const reflected = reflectVelocity(incoming, normal, {
+    restitution: 0.5,
+    tangentialRetention: 0.8,
+  });
+  const incomingNormal = incoming.x * normal.x + incoming.z * normal.z;
+  const outgoingNormal = reflected.x * normal.x + reflected.z * normal.z;
+
+  assert.ok(Math.abs(outgoingNormal + incomingNormal * 0.5) < 1);
+  assert.ok(reflected.y > incoming.y, "tangential velocity should be retained with damping");
+});
+
+test("piecewise ballistic prediction can bank off a rear wall before entering the rim", () => {
+  const geometry = {
+    ...DEFAULT_CONFIG,
+    canWidthMm: 260,
+    canDepthMm: 240,
+    rimMarginMm: 18,
+    rearWallBankEnabled: true,
+    rearWallGapMm: 30,
+    rearWallRestitution: 0.5,
+    rearWallTangentialRetention: 0.9,
+  };
+  const point = { x: 0, y: 300, z: 0 };
+  const velocity = { x: 0, y: -500, z: -1500 };
+
+  const bank = predictTrajectory(point, velocity, geometry);
+  const direct = predictTrajectory(point, velocity, {
+    ...geometry,
+    rearWallBankEnabled: false,
+  });
+
+  assert.equal(configuredSurfaces(geometry)[0].id, "rear-wall");
+  assert.equal(bank.collisions.length, 1);
+  assert.equal(bank.collisions[0].surfaceId, "rear-wall");
+  assert.equal(bank.intercept.inside, true);
+  assert.ok(bank.intercept.point.z > -120);
+  assert.equal(direct.collisions.length, 0);
+  assert.equal(direct.intercept.inside, false);
+  assert.ok(direct.intercept.point.z < -240);
+  assert.ok(bank.segments.every(segment => segment.path.length > 2));
+});
+
+test("detector exposes one early bank-predicted hook for a wall-bound projectile", () => {
+  const events = [];
+  const gravity = -9810;
+  const detector = new ShotDetector({
+    ...DEFAULT_CONFIG,
+    rearWallBankEnabled: true,
+    rearWallGapMm: 30,
+    minProjectileSpeedMmS: 650,
+    cooldownMs: 0,
+  }, event => events.push(event));
+  detector.start({ calibrate: false });
+
+  [0, 20, 40, 60].forEach(t => {
+    const seconds = t / 1000;
+    detector.ingestObservation({
+      t,
+      point: {
+        x: 0,
+        y: 300 - 500 * seconds + 0.5 * gravity * seconds ** 2,
+        z: -1500 * seconds,
+      },
+      confidence: 0.9,
+    });
+  });
+
+  assert.ok(events.some(event => event.type === "inbound"));
+  const bankEvents = events.filter(event => event.type === "bank-predicted");
+  assert.equal(bankEvents.length, 1);
+  assert.equal(bankEvents[0].collisions[0].surfaceId, "rear-wall");
 });
 
 test("background calibration removes the static scene and isolates a nearer object", () => {

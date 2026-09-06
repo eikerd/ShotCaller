@@ -114,6 +114,13 @@ class SessionRecorder:
         }):
             raise OSError(f"cannot initialize session log: {self.error}")
 
+        # Stamp the saved physics immediately. Previously a detector-config
+        # record only appeared after a POST /config, so a session where the
+        # operator never touched a control -- the normal case -- could not say
+        # what gravity, wall geometry and restitution produced its predictions.
+        # The replay guarantee has to hold without operator action.
+        self.record_detector_config(load_config())
+
     def _write(self, record, count_frame=False):
         with self._lock:
             if self.error is not None or self._file is None:
@@ -150,6 +157,13 @@ class SessionRecorder:
     def record_config(self, config):
         return self._write({
             "type": "config",
+            "recorded_at": time.time(),
+            "config": config,
+        })
+
+    def record_detector_config(self, config):
+        return self._write({
+            "type": "detector-config",
             "recorded_at": time.time(),
             "config": config,
         })
@@ -627,8 +641,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if url.path == "/config":
+            # Record first, persist second. Persisting a config the session log
+            # rejected leaves it on disk for the next reload or a second tab to
+            # fetch and apply, while the running session still has no
+            # detector-config record naming it -- which is the divergence this
+            # whole path exists to prevent.
+            recorded = True
+            if self.link.recorder:
+                recorded = bool(self.link.recorder.record_detector_config(payload))
+            if not recorded:
+                self._send(500, json.dumps({"saved": False, "recorded": False}),
+                           "application/json")
+                return
             save_config(payload)
-            self._send(200, json.dumps({"saved": True}), "application/json")
+            self._send(200, json.dumps({"saved": True, "recorded": True}),
+                       "application/json")
             return
 
         label = payload.get("label")

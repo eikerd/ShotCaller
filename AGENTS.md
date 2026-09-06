@@ -36,8 +36,11 @@ cross-layer feature.
 - Keep the frame parser and firmware `F,` / `C,` protocol changes synchronized.
 - Only target statuses 5 and 9 are trustworthy range values.
 - Use 4x4/60 Hz for throws; keep 8x8 for spatial inspection.
-- Preserve the `target-acquired`, `inbound`, `rim-crossed`, `in`, and `miss`
-  event names across browser and future embedded ports.
+- Preserve the `target-acquired`, `inbound`, `bank-predicted`, `rim-crossed`,
+  `in`, and `miss` event names across browser and future embedded ports.
+- Collision-surface normals point into playable free space. Treat bank
+  predictions as anticipatory effects only; `in` still requires an observed
+  downward rim crossing.
 - Detector behavior changes require a failing test before implementation.
 - Do not claim physical accuracy from synthetic tests. Record and label real
   throws for every mounted geometry.
