@@ -348,6 +348,18 @@
 
     ingestFrame(frame) {
       if (this.state === STATES.OFF) return [];
+      // The board's resolution can change under a live detector -- the
+      // operator clicks 4x4/8x8 in the dashboard. The baseline is per-zone and
+      // therefore tied to one grid, so a changed edge invalidates it. Without
+      // this, observationForFrame rejects every later frame on the edge
+      // mismatch and detection stops dead with no visible symptom.
+      if (
+        this.state !== STATES.CALIBRATING
+        && frame && Number.isInteger(frame.edge)
+        && this.projector.edge && frame.edge !== this.projector.edge
+      ) {
+        this.recalibrate();
+      }
       if (this.state === STATES.CALIBRATING) {
         const result = this.projector.addBaselineFrame(frame);
         this._emit("calibration-progress", result);
