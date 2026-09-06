@@ -7,18 +7,25 @@ firmware output without needing an interactive terminal session.
 Usage:
     python3 capture_serial.py [seconds] [output_file]
 
-Defaults: 5 seconds, build/serial_capture.log
-Port and baud are fixed to this project's known values (ST-LINK VCP on
-NUCLEO-F446RE, USART2 at 115200 8N1) -- override with SHOTCALLER_PORT env
-var if the device path changes (check `ls /dev/cu.usbmodem*`).
+Defaults: 5 seconds, build/serial_capture.log. The ST-LINK virtual serial
+device is autodetected on macOS/Linux; SHOTCALLER_PORT and SHOTCALLER_BAUD can
+override the detected port and the 921600-baud project default.
 """
+import glob
 import sys
 import os
 import time
 import serial
 
-PORT = os.environ.get("SHOTCALLER_PORT", "/dev/cu.usbmodem2244103")
-BAUD = 115200
+def autodetect_port():
+    candidates = sorted(glob.glob("/dev/cu.usbmodem*"))
+    if not candidates:
+        candidates = sorted(glob.glob("/dev/ttyACM*"))
+    return candidates[0] if candidates else None
+
+
+PORT = os.environ.get("SHOTCALLER_PORT") or autodetect_port()
+BAUD = int(os.environ.get("SHOTCALLER_BAUD", "921600"))
 
 def main():
     duration = float(sys.argv[1]) if len(sys.argv) > 1 else 5.0
@@ -27,6 +34,8 @@ def main():
     os.makedirs(os.path.dirname(outfile) or ".", exist_ok=True)
 
     try:
+        if not PORT:
+            raise serial.SerialException("no Nucleo serial device found")
         ser = serial.Serial(PORT, BAUD, timeout=0.5)
     except serial.SerialException as e:
         print(f"ERROR opening {PORT}: {e}", file=sys.stderr)

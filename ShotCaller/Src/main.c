@@ -26,6 +26,22 @@ static void MX_I2C1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void VL53_PowerUp(void);
 static void I2C_BusScan(void);
+static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id);
+static void ApplyConfig(VL53L5CX_Configuration *dev);
+static void PollCommands(VL53L5CX_Configuration *dev);
+
+/* Live sensor configuration, retunable from the host over UART (see
+ * PollCommands). The product default is 4x4 at 60Hz: trajectory tracking is
+ * limited by time resolution long before it is limited by zone count. */
+static uint8_t g_res       = VL53L5CX_RESOLUTION_4X4;
+static uint8_t g_hz        = 60;
+static uint8_t g_mode      = VL53L5CX_RANGING_MODE_CONTINUOUS;
+static uint8_t g_streaming = 1;
+/* Tracked because vl53l5cx_stop_ranging() polls for a stop acknowledgement the
+ * sensor never sends when it was not ranging, burning its full 5s timeout
+ * (vl53l5cx_api.c:642) on every such call -- including the very first config
+ * apply at boot. */
+static uint8_t g_ranging   = 0;
 
 int __io_putchar(int ch)
 {
@@ -64,34 +80,168 @@ int main(void)
         printf("ERROR: vl53l5cx_init failed, status=%u\r\n", status);
         Error_Handler();
     }
-    printf("Init OK. Starting 8x8 ranging.\r\n");
+    printf("# init OK\r\n");
 
-    vl53l5cx_set_resolution(&dev, VL53L5CX_RESOLUTION_8X8);
-    vl53l5cx_set_ranging_frequency_hz(&dev, 15);
-    vl53l5cx_start_ranging(&dev);
+    ApplyConfig(&dev);
 
     VL53L5CX_ResultsData results;
+    uint32_t frame_id = 0;
 
     while (1) {
+        PollCommands(&dev);
+
         uint8_t ready = 0;
         vl53l5cx_check_data_ready(&dev, &ready);
 
         if (ready) {
             vl53l5cx_get_ranging_data(&dev, &results);
-
-            printf("\r\n--- frame (mm) ---\r\n");
-            for (int row = 0; row < 8; row++) {
-                for (int col = 0; col < 8; col++) {
-                    int idx = row * 8 + col;
-                    printf("%5d", results.distance_mm[idx]);
-                }
-                printf("\r\n");
+            if (g_streaming) {
+                StreamFrame(&results, frame_id++);
             }
-
             HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
         }
 
-        HAL_Delay(5);
+        /* No HAL_Delay here: at 60Hz (4x4) a frame lands every ~16ms, and a
+         * fixed sleep would alias against the sensor's cadence and cost us
+         * frames -- exactly the timing resolution we are trying to measure. */
+    }
+}
+
+/* ---- Host streaming protocol ------------------------------------------
+ * One line per frame, parsed by tools/viz_server.py:
+ *
+ *   F,<id>,<t_ms>,<res>,<hz>,<d>:<st>:<sig>,<d>:<st>:<sig>,...
+ *
+ * where res is 4 or 8 (grid edge), one zone triple follows per zone in
+ * raster order, d = distance_mm, st = target_status, sig = signal_per_spad
+ * (kcps/SPAD). Lines beginning with '#' are human-readable log/banner text
+ * and 'C,' lines report the active configuration.
+ *
+ * The whole frame is composed into one buffer and pushed with a single
+ * blocking UART transmit. Going through printf() would issue one
+ * HAL_UART_Transmit per *character* (see __io_putchar), which at 8x8 is
+ * ~900 separate blocking calls per frame -- enough overhead to throttle the
+ * capture rate we are trying to characterize. */
+static char frame_buf[2048];
+
+static void UartWrite(const char *s, int len)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t *)s, (uint16_t)len, HAL_MAX_DELAY);
+}
+
+static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id)
+{
+    int zones = (g_res == VL53L5CX_RESOLUTION_8X8) ? 64 : 16;
+    int edge = (g_res == VL53L5CX_RESOLUTION_8X8) ? 8 : 4;
+    int n = 0;
+
+    n += snprintf(frame_buf + n, sizeof(frame_buf) - n, "F,%lu,%lu,%d,%u",
+                  (unsigned long)frame_id, (unsigned long)HAL_GetTick(),
+                  edge, g_hz);
+
+    for (int i = 0; i < zones; i++) {
+        int idx = VL53L5CX_NB_TARGET_PER_ZONE * i;
+        n += snprintf(frame_buf + n, sizeof(frame_buf) - n, ",%d:%u:%lu",
+                      r->distance_mm[idx],
+                      r->target_status[idx],
+                      (unsigned long)r->signal_per_spad[idx]);
+    }
+
+    n += snprintf(frame_buf + n, sizeof(frame_buf) - n, "\r\n");
+    UartWrite(frame_buf, n);
+}
+
+/* Reconfigure and (re)start ranging. Ranging must be stopped before
+ * resolution or frequency can change -- the sensor rejects the write
+ * otherwise, which is a quiet way to end up convinced a setting "didn't do
+ * anything". */
+static void ApplyConfig(VL53L5CX_Configuration *dev)
+{
+    if (g_ranging) {
+        vl53l5cx_stop_ranging(dev);
+        g_ranging = 0;
+    }
+
+    vl53l5cx_set_resolution(dev, g_res);
+    vl53l5cx_set_ranging_frequency_hz(dev, g_hz);
+    vl53l5cx_set_ranging_mode(dev, g_mode);
+    /* A small projectile is normally in front of a stronger, static wall or
+     * bin return. Closest-first keeps that projectile in target slot zero,
+     * which is the slot streamed to the host. */
+    vl53l5cx_set_target_order(dev, VL53L5CX_TARGET_ORDER_CLOSEST);
+
+    vl53l5cx_start_ranging(dev);
+    g_ranging = 1;
+
+    int edge = (g_res == VL53L5CX_RESOLUTION_8X8) ? 8 : 4;
+    int n = snprintf(frame_buf, sizeof(frame_buf),
+                     "C,res=%d,hz=%u,mode=%s,max_hz=%d,target=closest\r\n",
+                     edge, g_hz,
+                     (g_mode == VL53L5CX_RANGING_MODE_CONTINUOUS) ? "cont" : "auto",
+                     (g_res == VL53L5CX_RESOLUTION_8X8) ? 15 : 60);
+    UartWrite(frame_buf, n);
+}
+
+/* Single-character commands from the host, polled non-blocking so the
+ * ranging loop never stalls waiting on input. Lets the web UI retune the
+ * sensor live instead of requiring a rebuild+reflash per experiment. */
+static void PollCommands(VL53L5CX_Configuration *dev)
+{
+    /* Deliberately a raw register poll rather than HAL_UART_Receive(): that
+     * call locks the UART handle, and a byte arriving while we are inside
+     * ApplyConfig() (tens of ms) overruns the receiver. The HAL's error path
+     * can then leave the handle in a state where every subsequent
+     * HAL_UART_Transmit() returns BUSY -- the board keeps ranging but goes
+     * permanently silent, recoverable only by reset. Reading SR then DR here
+     * also clears ORE, so an overrun self-heals. */
+    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE)) {
+        __HAL_UART_CLEAR_OREFLAG(&huart2);
+    }
+    if (!__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE)) {
+        return;
+    }
+    uint8_t c = (uint8_t)(huart2.Instance->DR & 0xFFU);
+
+    switch (c) {
+    case '4': /* 4x4 -- up to 60Hz, the mode that can actually track a throw */
+        g_res = VL53L5CX_RESOLUTION_4X4;
+        if (g_hz > 60) g_hz = 60;
+        ApplyConfig(dev);
+        break;
+    case '8': /* 8x8 -- 4x the spatial detail, but capped at 15Hz */
+        g_res = VL53L5CX_RESOLUTION_8X8;
+        if (g_hz > 15) g_hz = 15;
+        ApplyConfig(dev);
+        break;
+    case '+': {
+        uint8_t max_hz = (g_res == VL53L5CX_RESOLUTION_8X8) ? 15 : 60;
+        if (g_hz < max_hz) { g_hz++; ApplyConfig(dev); }
+        break;
+    }
+    case '-':
+        if (g_hz > 1) { g_hz--; ApplyConfig(dev); }
+        break;
+    case 'M': /* jump straight to the ceiling for the current resolution.
+               * Worth having as its own command: RX is polled one byte at a
+               * time with no buffer, so a burst of '+' sent while we are
+               * inside ApplyConfig() is silently overrun and lost. */
+        g_hz = (g_res == VL53L5CX_RESOLUTION_8X8) ? 15 : 60;
+        ApplyConfig(dev);
+        break;
+    case 'm': /* continuous vs autonomous ranging mode */
+        g_mode = (g_mode == VL53L5CX_RANGING_MODE_CONTINUOUS)
+               ? VL53L5CX_RANGING_MODE_AUTONOMOUS
+               : VL53L5CX_RANGING_MODE_CONTINUOUS;
+        ApplyConfig(dev);
+        break;
+    case 'p':
+        g_streaming = !g_streaming;
+        break;
+    case '?':
+        ApplyConfig(dev);
+        break;
+    default:
+        break;
     }
 }
 
@@ -227,7 +377,11 @@ static void MX_I2C1_Init(void)
 static void MX_USART2_UART_Init(void)
 {
     huart2.Instance = USART2;
-    huart2.Init.BaudRate = 115200;
+    /* 921600 rather than 115200: an 8x8 frame with distance+status+signal is
+     * ~900 bytes, so 15Hz needs ~13.5KB/s and 115200 baud only carries
+     * ~11.5KB/s. At that rate the UART, not the sensor, would set the frame
+     * rate -- useless when measuring how fast the sensor can actually see. */
+    huart2.Init.BaudRate = 921600;
     huart2.Init.WordLength = UART_WORDLENGTH_8B;
     huart2.Init.StopBits = UART_STOPBITS_1;
     huart2.Init.Parity = UART_PARITY_NONE;
