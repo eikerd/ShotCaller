@@ -308,3 +308,43 @@ test("full frame ingestion calibrates before exposing the tracking hook", () => 
   assert.equal(detector.state, STATES.TRACKING);
   assert.ok(events.some(event => event.type === "target-acquired"));
 });
+
+test("an armed detector recalibrates when the board changes resolution", () => {
+  const events = [];
+  const detector = new ShotDetector(
+    { ...DEFAULT_CONFIG, baselineFrames: 3 },
+    event => events.push(event),
+  );
+
+  detector.start();
+  for (let i = 0; i < 3; i += 1) detector.ingestFrame(frame(i, Array(16).fill(1400)));
+  assert.equal(detector.state, STATES.ARMED, "four-by-four baseline should arm the detector");
+
+  // The operator clicks 8x8 while the detector is live. The board starts
+  // sending 64-zone frames against a 16-zone baseline.
+  events.length = 0;
+  detector.ingestFrame(frame(100, Array(64).fill(1400), 8));
+
+  assert.equal(
+    detector.state,
+    STATES.CALIBRATING,
+    "a resolution change must send the detector back to calibration, not leave it armed against a stale baseline",
+  );
+  assert.ok(
+    events.some(event => event.type === "calibrating"),
+    "the operator must be told the baseline was invalidated",
+  );
+
+  for (let i = 0; i < 3; i += 1) detector.ingestFrame(frame(101 + i, Array(64).fill(1400), 8));
+  assert.equal(detector.state, STATES.ARMED, "detector must re-arm on the new resolution");
+
+  // And detection must actually work again on the new grid.
+  const near = Array(64).fill(1400);
+  near[27] = 900;
+  near[28] = 900;
+  const emitted = detector.ingestFrame(frame(120, near, 8));
+  assert.ok(
+    emitted.length > 0 || detector.state === STATES.TRACKING,
+    "a foreground object on the new resolution must still open a track",
+  );
+});

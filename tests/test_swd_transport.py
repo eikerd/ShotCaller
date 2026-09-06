@@ -61,7 +61,12 @@ class SwdFrameDecodeTests(unittest.TestCase):
             def __exit__(self, *_):
                 pass
 
-            def read(self, _address, _size):
+            def read(self, _address, size):
+                # The iterator now brackets the slot copy with a standalone
+                # read of the leading seqlock marker, so the fake has to answer
+                # a sequence-sized read without consuming a scripted entry.
+                if size == swd_transport.SEQUENCE_SIZE:
+                    return swd_transport.SEQUENCE_STRUCT.pack(2)
                 return reads.pop(0)
 
         with (
@@ -80,5 +85,114 @@ def decode(payload):
     return swd_transport.decode_swd_frame(payload, received_at=1.0)
 
 
+class SwdTornReadTests(unittest.TestCase):
+    """The seqlock only works if the sequence is sampled around the copy.
+
+    Reading the leading marker, the payload and the trailing marker in one
+    non-atomic SWD transfer lets a writer that starts mid-transfer leave two
+    matching stale markers wrapped around mixed payload -- and the host accepts
+    it as a good frame.
+    """
+
+    def _slot(self, sequence, frame_id, fill):
+        return swd_transport.SWD_FRAME_STRUCT.pack(
+            sequence, frame_id, 1700, 8, 15, 64, *([fill] * 64), sequence
+        )
+
+    def test_a_frame_torn_by_a_concurrent_write_is_rejected(self):
+        header = swd_transport.SWD_RING_HEADER_STRUCT.pack(
+            swd_transport.SWD_FRAME_MAGIC, 1
+        )
+        good = self._slot(12, 41, 40)
+        # Same markers on both ends, payload from the next frame: exactly what
+        # a torn single-shot read produces.
+        torn = self._slot(12, 41, 77)
+
+        reads = []
+
+        class FakeProbe:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def read(self_inner, address, size):
+                reads.append((address, size))
+                if size == swd_transport.SWD_RING_HEADER_STRUCT.size:
+                    return header
+                # First observation of the sequence is stale-but-even; by the
+                # time the payload is copied the writer has moved on.
+                if size == 4:
+                    return b"\x0c\x00\x00\x00" if len(reads) < 4 else b"\x0d\x00\x00\x00"
+                return torn
+
+            def close(self_inner):
+                pass
+
+        frames = []
+        calls = {"n": 0}
+
+        def stop():
+            calls["n"] += 1
+            return calls["n"] > 3
+
+        with mock.patch.object(swd_transport, "SwdProbe", FakeProbe), \
+                mock.patch.object(swd_transport, "find_symbol_address",
+                                  return_value=0x20000000), \
+                mock.patch.object(swd_transport.time, "sleep"):
+            frames = list(swd_transport.iter_frames("fake.elf", stop_requested=stop))
+
+        self.assertEqual(
+            frames, [],
+            "a slot whose sequence changed while it was being copied must be "
+            "discarded, not handed to the recorder and detector",
+        )
+        self.assertTrue(
+            any(size == 4 for _, size in reads),
+            "the leading sequence must be sampled on its own, before and after "
+            "the slot copy",
+        )
+
+    def test_a_stable_slot_is_still_accepted(self):
+        header = swd_transport.SWD_RING_HEADER_STRUCT.pack(
+            swd_transport.SWD_FRAME_MAGIC, 1
+        )
+        good = self._slot(12, 41, 40)
+
+        class FakeProbe:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def read(self_inner, address, size):
+                if size == swd_transport.SWD_RING_HEADER_STRUCT.size:
+                    return header
+                if size == 4:
+                    return b"\x0c\x00\x00\x00"
+                return good
+
+            def close(self_inner):
+                pass
+
+        calls = {"n": 0}
+
+        def stop():
+            calls["n"] += 1
+            return calls["n"] > 2
+
+        with mock.patch.object(swd_transport, "SwdProbe", FakeProbe), \
+                mock.patch.object(swd_transport, "find_symbol_address",
+                                  return_value=0x20000000), \
+                mock.patch.object(swd_transport.time, "sleep"):
+            frames = list(swd_transport.iter_frames("fake.elf", stop_requested=stop))
+
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0]["id"], 41)
+
+
 if __name__ == "__main__":
     unittest.main()
+

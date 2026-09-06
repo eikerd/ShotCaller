@@ -51,6 +51,22 @@ REPO = os.path.dirname(HERE)
 # 1800 frames is ~2 minutes at 15Hz, ~30 seconds at 60Hz.
 HISTORY = 1800
 STREAM_STALE_AFTER_SECONDS = 2.0
+# HAL_GetTick() is uint32_t milliseconds; it wraps after ~49.7 days.
+TICK_WRAP = 2 ** 32
+
+# A continuous session writes roughly 30 KB/s at 4x4/60 Hz, so an unattended
+# rig fills a disk in days. Recording is the precondition for every throw the
+# operator is allowed to make, so it has to fail loudly and early rather than
+# hit ENOSPC mid-session. This floor is about 4 hours of headroom.
+MIN_FREE_BYTES = 512 * 1024 * 1024
+# statvfs per frame would be wasteful; once per ~10 s at 60 Hz is plenty.
+FREE_SPACE_CHECK_EVERY = 600
+
+
+def free_bytes(path):
+    """Bytes available to an unprivileged writer under path."""
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
 
 
 THROWS_DIR = os.path.join(REPO, "captures", "throws")
@@ -70,6 +86,17 @@ class SessionRecorder:
 
         sessions_dir = os.path.join(captures_dir, "sessions")
         os.makedirs(sessions_dir, exist_ok=True)
+
+        # Refuse to open a session we cannot finish. Sessions are never deleted
+        # automatically: a recorded throw is ground truth the operator cannot
+        # regenerate, so retention stays a human decision.
+        available = free_bytes(sessions_dir)
+        if available < MIN_FREE_BYTES:
+            raise OSError(
+                f"refusing to record: {available // (1024 * 1024)} MB free space "
+                f"below the {MIN_FREE_BYTES // (1024 * 1024)} MB floor at "
+                f"{sessions_dir}"
+            )
         stamp = time.strftime("%Y%m%d-%H%M%S",
                               time.localtime(self.started_at))
         base = os.path.join(sessions_dir, f"session-{stamp}")
@@ -93,6 +120,13 @@ class SessionRecorder:
         }):
             raise OSError(f"cannot initialize session log: {self.error}")
 
+        # Stamp the saved physics immediately. Previously a detector-config
+        # record only appeared after a POST /config, so a session where the
+        # operator never touched a control -- the normal case -- could not say
+        # what gravity, wall geometry and restitution produced its predictions.
+        # The replay guarantee has to hold without operator action.
+        self.record_detector_config(load_config())
+
     def _write(self, record, count_frame=False):
         with self._lock:
             if self.error is not None or self._file is None:
@@ -105,6 +139,15 @@ class SessionRecorder:
                 self._file.flush()
                 if count_frame:
                     self.frames_recorded += 1
+                    if self.frames_recorded % FREE_SPACE_CHECK_EVERY == 0:
+                        available = free_bytes(os.path.dirname(self.path))
+                        if available < MIN_FREE_BYTES:
+                            self.error = (
+                                f"stopped recording: {available // (1024 * 1024)} MB "
+                                f"free space below the "
+                                f"{MIN_FREE_BYTES // (1024 * 1024)} MB floor"
+                            )
+                            return False
                 return True
             except (OSError, ValueError) as exc:
                 self.error = str(exc)
@@ -211,10 +254,25 @@ def load_throws():
 
 def save_throw(payload):
     os.makedirs(THROWS_DIR, exist_ok=True)
-    tid = time.strftime("%Y%m%d-%H%M%S") + f"-{payload['label']}"
-    with open(os.path.join(THROWS_DIR, tid + ".json"), "w") as f:
-        json.dump(payload, f)
-    return tid
+    # Throw IDs carry one-second precision, so two saves inside the same second
+    # -- a double-click, or two dashboard tabs -- would land on one path and the
+    # second would truncate the first. Create exclusively and suffix on
+    # collision so a labelled throw is never silently replaced.
+    stem = time.strftime("%Y%m%d-%H%M%S") + f"-{payload['label']}"
+    for attempt in range(1, 1000):
+        tid = stem if attempt == 1 else f"{stem}-{attempt}"
+        try:
+            fd = os.open(
+                os.path.join(THROWS_DIR, tid + ".json"),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o644,
+            )
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        return tid
+    raise OSError(f"could not allocate a throw id for {stem}")
 
 
 def delete_throw(tid):
@@ -322,6 +380,19 @@ class SensorLink:
                 except queue.Empty:
                     pass
 
+    def _unwrap_tick(self, raw):
+        """HAL_GetTick() is a 32-bit millisecond counter and wraps every 49.7
+        days. Everything downstream -- track expiry, cooldowns, velocity --
+        assumes timestamps only increase, so unwrap the counter here at the
+        parser boundary rather than teach every consumer about the wrap."""
+        last = getattr(self, "_last_raw_tick", None)
+        epoch = getattr(self, "_tick_epoch", 0)
+        if last is not None and raw < last and (last - raw) > TICK_WRAP // 2:
+            epoch += 1
+        self._tick_epoch = epoch
+        self._last_raw_tick = raw
+        return raw + epoch * TICK_WRAP
+
     def parse_frame(self, line):
         """F,<id>,<t_ms>,<edge>,<hz>,<d>:<st>:<sig>,... -> dict, or None."""
         parts = line.split(",")
@@ -329,7 +400,7 @@ class SensorLink:
             return None
         try:
             frame_id = int(parts[1])
-            t_ms = int(parts[2])
+            t_ms = self._unwrap_tick(int(parts[2]))
             edge = int(parts[3])
             hz = int(parts[4])
         except ValueError:
@@ -448,7 +519,13 @@ class SensorLink:
                 continue
             if first:
                 first = False
-                continue
+                # open() flushes the input buffer and then asks the board to
+                # re-announce with '?', so the first whole line is usually the
+                # C, reply -- dropping it unconditionally left /api/status and
+                # every fresh dashboard with no board configuration. Only
+                # discard it when it is not already a complete record.
+                if not line.startswith(("F,", "C,", "E,")):
+                    continue
 
             if line.startswith("F,"):
                 frame = self.parse_frame(line)
@@ -510,9 +587,60 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # Endpoints that change state: retune the board, write capture files, or
+    # delete labelled throws. They are reachable from any page the operator has
+    # open, because the browser attaches to loopback happily from any origin.
+    # /config is not listed: GET /config reads the saved geometry and only
+    # POST /config writes it.
+    MUTATIONS = ("/cmd", "/save", "/throws/delete", "/throws/save")
+
+    LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
+    def _host_is_loopback(self):
+        """Reject a rebound hostname. If attacker.example resolves to
+        127.0.0.1, the browser treats this server as same-origin with the
+        attacker's page; checking Host closes that."""
+        host = (self.headers.get("Host") or "").strip()
+        if host.startswith("[") and "]" in host:
+            host = host[1:host.index("]")]          # [::1]:8420 -> ::1
+        elif host.count(":") == 1:
+            host = host.split(":", 1)[0]            # 127.0.0.1:8420 -> 127.0.0.1
+        return host == "" or host in self.LOOPBACK_HOSTS
+
+    def _origin_is_local(self):
+        """A cross-site fetch carries the attacker's Origin. A same-origin
+        dashboard request carries ours, or none at all."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = urlparse(origin).hostname
+        return host in ("127.0.0.1", "localhost", "::1")
+
+    def _guard(self):
+        if not self._host_is_loopback():
+            self._send(403, "forbidden: non-loopback Host")
+            return False
+        if not self._origin_is_local():
+            self._send(403, "forbidden: cross-origin request")
+            return False
+        return True
+
     def do_GET(self):
         url = urlparse(self.path)
         qs = parse_qs(url.query)
+
+        if not self._guard():
+            return
+
+        # A GET must never change anything: <img src="http://127.0.0.1:8420/
+        # cmd?c=8"> on any page the operator visits would otherwise retune the
+        # attached sensor, and a guessed throw ID would delete capture data.
+        if url.path in self.MUTATIONS:
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
         if url.path in ("/", "/index.html"):
             try:
@@ -544,30 +672,14 @@ class Handler(BaseHTTPRequestHandler):
         elif url.path == "/events":
             self.stream_events()
 
-        elif url.path == "/cmd":
-            ch = (qs.get("c") or [""])[0]
-            if not ch:
-                self._send(400, "missing ?c=<char>")
-                return
-            self.link.send(ch)
-            self._send(200, "ok")
-
         elif url.path == "/history":
             n = int((qs.get("n") or [str(HISTORY)])[0])
             frames = list(self.link.history)[-n:]
             self._send(200, json.dumps({"frames": frames}),
                        "application/json")
 
-        elif url.path == "/save":
-            self.save_capture()
-
         elif url.path == "/throws/list":
             self._send(200, json.dumps({"throws": load_throws()}),
-                       "application/json")
-
-        elif url.path == "/throws/delete":
-            tid = (qs.get("id") or [""])[0]
-            self._send(200, json.dumps({"deleted": delete_throw(tid)}),
                        "application/json")
 
         elif url.path == "/config":
@@ -578,6 +690,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
+        qs = parse_qs(url.query)
+
+        if not self._guard():
+            return
+
+        if url.path == "/cmd":
+            ch = (qs.get("c") or [""])[0]
+            if not ch:
+                self._send(400, "missing ?c=<char>")
+                return
+            self.link.send(ch)
+            self._send(200, "ok")
+            return
+
+        if url.path == "/save":
+            self.save_capture()
+            return
+
+        if url.path == "/throws/delete":
+            tid = (qs.get("id") or [""])[0]
+            self._send(200, json.dumps({"deleted": delete_throw(tid)}),
+                       "application/json")
+            return
 
         if url.path not in ("/throws/save", "/config"):
             self._send(404, "not found")
@@ -591,10 +726,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if url.path == "/config":
-            save_config(payload)
+            # Record first, persist second. Persisting a config the session log
+            # rejected leaves it on disk for the next reload or a second tab to
+            # fetch and apply, while the running session still has no
+            # detector-config record naming it -- which is the divergence this
+            # whole path exists to prevent.
+            recorded = True
             if self.link.recorder:
-                self.link.recorder.record_detector_config(payload)
-            self._send(200, json.dumps({"saved": True}), "application/json")
+                recorded = bool(self.link.recorder.record_detector_config(payload))
+            if not recorded:
+                self._send(500, json.dumps({"saved": False, "recorded": False}),
+                           "application/json")
+                return
+            save_config(payload)
+            self._send(200, json.dumps({"saved": True, "recorded": True}),
+                       "application/json")
             return
 
         label = payload.get("label")
