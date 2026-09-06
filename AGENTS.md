@@ -41,6 +41,10 @@ cross-layer feature.
 - Detector behavior changes require a failing test before implementation.
 - Do not claim physical accuracy from synthetic tests. Record and label real
   throws for every mounted geometry.
+- Never ask the user to make a test throw until `/api/status` reports an active
+  continuous recorder and `recording.frames_recorded` is advancing. Keep the
+  recorder running for the entire throw session; do not rely only on labelled
+  event windows.
 - Never hardcode a transient `/dev/cu.usbmodem*` suffix; autodetect or accept
   `SHOTCALLER_PORT`.
 - Review `git diff` before committing. Do not commit captures or build output.

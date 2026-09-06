@@ -12,6 +12,60 @@ from unittest import mock
 from tools import viz_server
 
 
+class SessionRecorderTests(unittest.TestCase):
+    def test_flushes_every_sensor_reading_to_a_session_log(self):
+        frame = {
+            "id": 41,
+            "t": 1700,
+            "edge": 4,
+            "hz": 60,
+            "d": [300] * 16,
+            "s": [5] * 16,
+            "sig": [18] * 16,
+            "rx": 1_700_000_000.25,
+        }
+
+        with tempfile.TemporaryDirectory() as captures_dir:
+            recorder = viz_server.SessionRecorder(
+                captures_dir,
+                port="/dev/test-shotcaller",
+                baud=921600,
+                started_at=1_700_000_000.0,
+            )
+            recorder.record_config({"res": "4", "hz": "60"})
+            recorder.record_frame(frame)
+
+            # Read before close: every frame must already be durable while a
+            # person is making throws, not merely buffered until clean exit.
+            with open(recorder.path, encoding="utf-8") as session_file:
+                records = [json.loads(line) for line in session_file]
+
+            self.assertEqual(
+                [record["type"] for record in records],
+                ["session-start", "config", "frame"],
+            )
+            self.assertEqual(records[2]["frame"], frame)
+            self.assertEqual(recorder.status()["frames_recorded"], 1)
+            self.assertTrue(recorder.status()["active"])
+            self.assertTrue(os.path.isfile(recorder.status()["path"]))
+
+            recorder.close()
+            self.assertFalse(recorder.status()["active"])
+
+    def test_recording_failure_is_visible_in_status(self):
+        with tempfile.TemporaryDirectory() as captures_dir:
+            recorder = viz_server.SessionRecorder(
+                captures_dir,
+                port="/dev/test-shotcaller",
+                baud=921600,
+            )
+            recorder._file.close()
+
+            self.assertFalse(recorder.record_frame({"id": 1}))
+            self.assertFalse(recorder.status()["active"])
+            self.assertIn("closed file", recorder.status()["error"])
+
+
 class LocalServerTests(unittest.TestCase):
     def test_server_bind_does_not_require_reverse_dns(self):
         with mock.patch.object(
@@ -66,6 +120,7 @@ def _link_with(lines):
     link.frames_seen = 0
     link.parse_errors = 0
     link.config = None
+    link.recorder = None
     link.log = collections.deque(maxlen=64)
     return link
 
@@ -210,6 +265,44 @@ class MutationAuthTests(unittest.TestCase):
         # treats the loopback server as same-origin with the attacker's page.
         status, _ = self._request("/api/status", headers={"Host": "attacker.example"})
         self.assertEqual(status, 403)
+
+
+class SessionStorageGuardTests(unittest.TestCase):
+    def test_recording_refuses_to_start_on_a_nearly_full_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(viz_server, "free_bytes", return_value=1024):
+                with self.assertRaises(OSError) as caught:
+                    viz_server.SessionRecorder(tmp, "/dev/fake", 921600)
+        self.assertIn("free space", str(caught.exception).lower())
+
+    def test_recording_stops_with_a_clear_error_before_the_disk_fills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                viz_server, "free_bytes",
+                return_value=viz_server.MIN_FREE_BYTES + 1,
+            ):
+                rec = viz_server.SessionRecorder(tmp, "/dev/fake", 921600)
+
+            frame = {"id": 1, "t": 1, "edge": 4, "hz": 60,
+                     "d": [300] * 16, "s": [5] * 16, "sig": [20] * 16}
+
+            with mock.patch.object(
+                viz_server, "free_bytes",
+                return_value=viz_server.MIN_FREE_BYTES + 1,
+            ):
+                for _ in range(viz_server.FREE_SPACE_CHECK_EVERY):
+                    self.assertTrue(rec.record_frame(frame))
+
+            # The disk fills under a running session.
+            with mock.patch.object(viz_server, "free_bytes", return_value=1024):
+                for _ in range(viz_server.FREE_SPACE_CHECK_EVERY):
+                    if not rec.record_frame(frame):
+                        break
+                else:
+                    self.fail("recorder must stop before the filesystem does")
+
+        self.assertIsNotNone(rec.error)
+        self.assertIn("free space", rec.error.lower())
 
 
 if __name__ == "__main__":
