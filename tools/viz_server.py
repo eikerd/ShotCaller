@@ -114,6 +114,13 @@ class SessionRecorder:
         }):
             raise OSError(f"cannot initialize session log: {self.error}")
 
+        # Stamp the saved physics immediately. Previously a detector-config
+        # record only appeared after a POST /config, so a session where the
+        # operator never touched a control -- the normal case -- could not say
+        # what gravity, wall geometry and restitution produced its predictions.
+        # The replay guarantee has to hold without operator action.
+        self.record_detector_config(load_config())
+
     def _write(self, record, count_frame=False):
         with self._lock:
             if self.error is not None or self._file is None:
@@ -635,9 +642,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/config":
             save_config(payload)
+            # The client applies new physics to the live detector on the
+            # strength of this response. Saying "saved" when the session log
+            # did not capture the change lets a replay attribute predictions
+            # to physics that were never in force.
+            recorded = True
             if self.link.recorder:
-                self.link.recorder.record_detector_config(payload)
-            self._send(200, json.dumps({"saved": True}), "application/json")
+                recorded = bool(self.link.recorder.record_detector_config(payload))
+            body = json.dumps({"saved": True, "recorded": recorded})
+            self._send(200 if recorded else 500, body, "application/json")
             return
 
         label = payload.get("label")

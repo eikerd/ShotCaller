@@ -47,12 +47,21 @@ class SessionRecorderTests(unittest.TestCase):
             with open(recorder.path, encoding="utf-8") as session_file:
                 records = [json.loads(line) for line in session_file]
 
+            # A session now stamps the saved physics at open, before any
+            # operator action, so the replay guarantee holds for a session
+            # where nobody touches a control.
             self.assertEqual(
                 [record["type"] for record in records],
-                ["session-start", "config", "detector-config", "frame"],
+                ["session-start", "detector-config", "config",
+                 "detector-config", "frame"],
             )
-            self.assertTrue(records[2]["config"]["geometry"]["rearWallBankEnabled"])
-            self.assertEqual(records[3]["frame"], frame)
+            # Address by kind, not by index: the session now opens with its
+            # own detector-config record and a positional assertion would
+            # break again the next time the preamble changes.
+            physics = [r for r in records if r["type"] == "detector-config"][-1]
+            self.assertTrue(physics["config"]["geometry"]["rearWallBankEnabled"])
+            self.assertEqual(
+                [r for r in records if r["type"] == "frame"][0]["frame"], frame)
             self.assertEqual(recorder.status()["frames_recorded"], 1)
             self.assertTrue(recorder.status()["active"])
             self.assertTrue(os.path.isfile(recorder.status()["path"]))
@@ -311,6 +320,70 @@ class SessionStorageGuardTests(unittest.TestCase):
 
         self.assertIsNotNone(rec.error)
         self.assertIn("free space", rec.error.lower())
+
+
+class PhysicsReplayTests(unittest.TestCase):
+    """A session log must be able to say which physics produced its
+    predictions. That is the whole claim of the bank-shot work."""
+
+    def _records(self, path):
+        return [json.loads(line) for line in open(path) if line.strip()]
+
+    def test_a_session_records_its_physics_without_any_operator_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(viz_server, "free_bytes",
+                                   return_value=viz_server.MIN_FREE_BYTES + 1):
+                with mock.patch.object(
+                    viz_server, "load_config",
+                    return_value={"version": 3, "geometry": {"gravityMmS2": -9810}},
+                ):
+                    rec = viz_server.SessionRecorder(tmp, "/dev/fake", 921600)
+
+            kinds = [r["type"] for r in self._records(rec.path)]
+            self.assertIn(
+                "detector-config", kinds,
+                "an operator who never touches a control still needs the "
+                "session to say what physics produced its predictions",
+            )
+
+    def test_config_post_reports_a_failed_recorder_write(self):
+        class DeadRecorder:
+            error = "disk on fire"
+            def record_detector_config(self, config):
+                return False
+            def status(self):
+                return {"active": False, "error": self.error}
+
+        link = _link_with([])
+        link.recorder = DeadRecorder()
+        viz_server.Handler.link = link
+        server = viz_server.LocalThreadingHTTPServer(
+            ("127.0.0.1", 0), viz_server.Handler
+        )
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            body = json.dumps({"version": 3, "geometry": {}}).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/config",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with mock.patch.object(viz_server, "save_config"):
+                try:
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        code, payload = resp.status, json.loads(resp.read())
+                except urllib.error.HTTPError as e:
+                    code, payload = e.code, json.loads(e.read())
+        finally:
+            server.shutdown(); server.server_close()
+
+        self.assertNotEqual(
+            code, 200,
+            "reporting saved:true when the session log did not capture the "
+            "config lets a replay silently attribute predictions to the "
+            "wrong physics",
+        )
+        self.assertFalse(payload.get("recorded", True))
 
 
 if __name__ == "__main__":

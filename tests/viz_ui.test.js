@@ -56,3 +56,39 @@ test("RECAL is gated on the recorder, exactly like ARM", () => {
       + "ARMED, bypassing the ARM guard entirely",
   );
 });
+
+test("physics reaches the session log before it reaches the detector", () => {
+  // The session log's claim is that it can say which physics produced each
+  // prediction. Applying a change to the live detector and recording it 300 ms
+  // later, best-effort, breaks exactly that.
+  assert.match(
+    html,
+    /async function recordAndApplyConfig\(\)/,
+    "config changes must go through one path that records before applying",
+  );
+  assert.match(
+    html,
+    /await fetch\("\/config",\{method:"POST"[\s\S]{0,400}?runtime\.detector\.setConfig/,
+    "setConfig must come after the awaited POST, not before it",
+  );
+  assert.doesNotMatch(
+    html,
+    /setTimeout\(\(\)=>fetch\("\/config"/,
+    "the debounced fire-and-forget save let the detector run physics the log "
+      + "had not yet recorded",
+  );
+});
+
+test("a physics change that was not recorded is surfaced, not swallowed", () => {
+  assert.doesNotMatch(
+    html,
+    /fetch\("\/config",\{method:"POST"[\s\S]{0,300}?\}\)\.catch\(\(\)=>\{\}\)/,
+    "a failed config POST was silently discarded",
+  );
+  assert.match(
+    html,
+    /result\.recorded===false|!response\.ok/,
+    "the server now reports whether the recorder captured the config; the "
+      + "dashboard must act on that",
+  );
+});
