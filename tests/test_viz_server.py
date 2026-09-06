@@ -385,6 +385,38 @@ class PhysicsReplayTests(unittest.TestCase):
         )
         self.assertFalse(payload.get("recorded", True))
 
+    def test_a_config_the_log_rejected_is_not_persisted(self):
+        """A failed record must not leave the new physics on disk: the next
+        reload would fetch and apply it, and the running session still has no
+        detector-config record naming it."""
+        class DeadRecorder:
+            def record_detector_config(self, config):
+                return False
+
+        link = _link_with([])
+        link.recorder = DeadRecorder()
+        viz_server.Handler.link = link
+        server = viz_server.LocalThreadingHTTPServer(
+            ("127.0.0.1", 0), viz_server.Handler
+        )
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            body = json.dumps({"version": 3, "geometry": {"gravityMmS2": -1}}).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/config",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with mock.patch.object(viz_server, "save_config") as saver:
+                try:
+                    urllib.request.urlopen(req, timeout=5).read()
+                except urllib.error.HTTPError as e:
+                    e.read()
+        finally:
+            server.shutdown(); server.server_close()
+
+        saver.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

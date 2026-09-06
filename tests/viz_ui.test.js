@@ -92,3 +92,19 @@ test("a physics change that was not recorded is surfaced, not swallowed", () => 
       + "dashboard must act on that",
   );
 });
+
+test("demo paths use the same record-before-apply flow as the controls", () => {
+  // A demo flips rear-wall bank on the live config. Applying it synchronously
+  // and recording it afterwards publishes bank predictions under physics the
+  // log has not captured -- the same hole the controls just had.
+  assert.doesNotMatch(
+    html,
+    /syncControls\(\);runtime\.detector\.setConfig\(runtime\.config\);saveConfig\(\)/,
+    "demos must not apply physics ahead of the record",
+  );
+  assert.match(
+    html,
+    /await recordAndApplyConfig\(\)/,
+    "demo activation and restoration must await the record-before-apply path",
+  );
+});

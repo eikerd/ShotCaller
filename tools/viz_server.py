@@ -641,16 +641,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if url.path == "/config":
-            save_config(payload)
-            # The client applies new physics to the live detector on the
-            # strength of this response. Saying "saved" when the session log
-            # did not capture the change lets a replay attribute predictions
-            # to physics that were never in force.
+            # Record first, persist second. Persisting a config the session log
+            # rejected leaves it on disk for the next reload or a second tab to
+            # fetch and apply, while the running session still has no
+            # detector-config record naming it -- which is the divergence this
+            # whole path exists to prevent.
             recorded = True
             if self.link.recorder:
                 recorded = bool(self.link.recorder.record_detector_config(payload))
-            body = json.dumps({"saved": True, "recorded": recorded})
-            self._send(200 if recorded else 500, body, "application/json")
+            if not recorded:
+                self._send(500, json.dumps({"saved": False, "recorded": False}),
+                           "application/json")
+                return
+            save_config(payload)
+            self._send(200, json.dumps({"saved": True, "recorded": True}),
+                       "application/json")
             return
 
         label = payload.get("label")
