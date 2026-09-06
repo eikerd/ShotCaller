@@ -9,7 +9,7 @@ Usage:
 
 Defaults: 5 seconds, build/serial_capture.log. The ST-LINK virtual serial
 device is autodetected on macOS/Linux; SHOTCALLER_PORT and SHOTCALLER_BAUD can
-override the detected port and the 921600-baud project default.
+override the detected port and the 460800-baud project default.
 """
 import glob
 import sys
@@ -25,7 +25,7 @@ def autodetect_port():
 
 
 PORT = os.environ.get("SHOTCALLER_PORT") or autodetect_port()
-BAUD = int(os.environ.get("SHOTCALLER_BAUD", "921600"))
+BAUD = int(os.environ.get("SHOTCALLER_BAUD", "460800"))
 
 def main():
     duration = float(sys.argv[1]) if len(sys.argv) > 1 else 5.0

@@ -38,6 +38,11 @@ try:
 except ImportError:
     sys.exit("pyserial not found -- install with: pip3 install pyserial")
 
+try:
+    from . import swd_transport
+except ImportError:
+    import swd_transport
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
@@ -45,6 +50,7 @@ REPO = os.path.dirname(HERE)
 # scrub back through a throw that already happened) still has history to show.
 # 1800 frames is ~2 minutes at 15Hz, ~30 seconds at 60Hz.
 HISTORY = 1800
+STREAM_STALE_AFTER_SECONDS = 2.0
 # HAL_GetTick() is uint32_t milliseconds; it wraps after ~49.7 days.
 TICK_WRAP = 2 ** 32
 
@@ -307,7 +313,29 @@ class SensorLink:
 
         self.frames_seen = 0
         self.parse_errors = 0
+        self.last_frame_at = None
+        self.last_uart_frame_at = None
+        self.transport = None
         self.recording_failure_noted = False
+        self.stop_event = threading.Event()
+
+    def status(self, now=None):
+        """Report sensor liveness, not merely whether the OS opened a port."""
+        now = time.time() if now is None else now
+        serial_open = self.ser is not None and self.ser.is_open
+        frame_age = (
+            None if self.last_frame_at is None else max(0.0, now - self.last_frame_at)
+        )
+        return {
+            "connected": bool(
+                frame_age is not None
+                and frame_age <= STREAM_STALE_AFTER_SECONDS
+            ),
+            "serial_open": serial_open,
+            "transport": self.transport,
+            "last_frame_at": self.last_frame_at,
+            "last_frame_age_seconds": frame_age,
+        }
 
     def open(self):
         self.ser = serial.Serial(self.port, self.baud, timeout=1.0)
@@ -406,14 +434,80 @@ class SensorLink:
             "rx": time.time(),
         }
 
+    def accept_frame(self, frame, transport, received_at=None):
+        """Record and publish one real frame from UART or the SWD fallback."""
+        received_at = time.time() if received_at is None else received_at
+        self.frames_seen += 1
+        self.last_frame_at = received_at
+        self.transport = transport
+        if transport == "uart":
+            self.last_uart_frame_at = received_at
+        if (self.recorder and not self.recorder.record_frame(frame)
+                and not self.recording_failure_noted):
+            self.recording_failure_noted = True
+            self._note(
+                f"CRITICAL: continuous recorder stopped: "
+                f"{self.recorder.status()['error']}",
+                record=False,
+            )
+        self.history.append(frame)
+        self._publish({"type": "frame", "frame": frame,
+                       "transport": transport})
+
+    def _accept_swd_config(self, frame):
+        cfg = {
+            "res": str(frame["edge"]),
+            "hz": str(frame["hz"]),
+            "mode": "cont",
+            "max_hz": "15" if frame["edge"] == 8 else "60",
+            "target": "closest",
+            "transport": "swd",
+        }
+        if cfg == self.config:
+            return
+        self.config = cfg
+        if self.recorder:
+            self.recorder.record_config(cfg)
+        self._publish({"type": "config", "config": cfg})
+
+    def swd_fallback_loop(self, elf_path):
+        """Use the working SWD endpoint only while UART frames are absent."""
+        time.sleep(STREAM_STALE_AFTER_SECONDS)
+        while not self.stop_event.is_set():
+            now = time.time()
+            if (self.last_uart_frame_at is not None
+                    and now - self.last_uart_frame_at <= STREAM_STALE_AFTER_SECONDS):
+                time.sleep(0.5)
+                continue
+            try:
+                self._note("serial silent; opening real-frame SWD fallback")
+                for frame in swd_transport.iter_frames(
+                    elf_path,
+                    stop_requested=lambda: (
+                        self.stop_event.is_set()
+                        or (
+                            self.last_uart_frame_at is not None
+                            and time.time() - self.last_uart_frame_at
+                            <= STREAM_STALE_AFTER_SECONDS
+                        )
+                    ),
+                ):
+                    self._accept_swd_config(frame)
+                    self.accept_frame(frame, "swd")
+            except swd_transport.SwdUnavailable as exc:
+                self._note(f"SWD fallback unavailable: {exc}")
+                time.sleep(1.0)
+
     def reader_loop(self):
         # We almost certainly attached mid-frame, so the first readline() is a
         # tail fragment. Drop it rather than log a line of orphaned zone data.
         first = True
-        while True:
+        while not self.stop_event.is_set():
             try:
                 raw = self.ser.readline()
             except serial.SerialException as e:
+                if self.stop_event.is_set():
+                    break
                 self._note(f"serial error: {e}")
                 time.sleep(1.0)
                 continue
@@ -438,17 +532,7 @@ class SensorLink:
                 if frame is None:
                     self.parse_errors += 1
                     continue
-                self.frames_seen += 1
-                if (self.recorder and not self.recorder.record_frame(frame)
-                        and not self.recording_failure_noted):
-                    self.recording_failure_noted = True
-                    self._note(
-                        f"CRITICAL: continuous recorder stopped: "
-                        f"{self.recorder.status()['error']}",
-                        record=False,
-                    )
-                self.history.append(frame)
-                self._publish({"type": "frame", "frame": frame})
+                self.accept_frame(frame, "uart")
             elif line.startswith("C,"):
                 cfg = {}
                 for kv in line[2:].split(","):
@@ -573,8 +657,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, f"cannot read shot_model.js: {e}")
 
         elif url.path == "/api/status":
+            link_status = self.link.status()
             self._send(200, json.dumps({
-                "connected": self.link.ser is not None and self.link.ser.is_open,
+                **link_status,
                 "port": self.link.port,
                 "baud": self.link.baud,
                 "frames_seen": self.link.frames_seen,
@@ -724,8 +809,12 @@ def main():
     ap.add_argument("--port", default=os.environ.get("SHOTCALLER_PORT"),
                     help="serial device (default: autodetect /dev/cu.usbmodem*)")
     ap.add_argument("--baud", type=int,
-                    default=int(os.environ.get("SHOTCALLER_BAUD", "921600")))
+                    default=int(os.environ.get("SHOTCALLER_BAUD", "460800")))
     ap.add_argument("--http-port", type=int, default=8420)
+    ap.add_argument("--elf", default=os.path.join(REPO, "build", "shotcaller.elf"),
+                    help="firmware ELF used to locate the SWD live-frame buffer")
+    ap.add_argument("--no-swd", action="store_true",
+                    help="disable the automatic ST-LINK SWD fallback")
     args = ap.parse_args()
 
     port = args.port or autodetect_port()
@@ -746,6 +835,14 @@ def main():
         sys.exit(f"ERROR opening {port} @ {args.baud}: {e}")
 
     threading.Thread(target=link.reader_loop, daemon=True).start()
+    swd_thread = None
+    if not args.no_swd:
+        swd_thread = threading.Thread(
+            target=link.swd_fallback_loop,
+            args=(args.elf,),
+            daemon=True,
+        )
+        swd_thread.start()
 
     Handler.link = link
     httpd = LocalThreadingHTTPServer(("127.0.0.1", args.http_port), Handler)
@@ -761,8 +858,11 @@ def main():
         print("\nbye")
     finally:
         httpd.server_close()
+        link.stop_event.set()
         if link.ser is not None and link.ser.is_open:
             link.ser.close()
+        if swd_thread is not None:
+            swd_thread.join(timeout=2.0)
         recorder.close()
 
 

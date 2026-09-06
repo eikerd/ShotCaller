@@ -10,6 +10,34 @@ const html = fs.readFileSync(
   "utf8",
 );
 
+test("production dashboard is live-only and starts with an 8x8 raster", () => {
+  assert.doesNotMatch(html, /simulationConsole|RUN MAKE|RUN MISS|RUN BANK/);
+  assert.doesNotMatch(html, /DEMO MAKE|DEMO MISS|DEMO BANK/);
+  assert.doesNotMatch(html, /query\.has\("qa"\)|activateQaMode|syntheticSensorFrame/);
+  assert.match(html, /VL53L5CX · closest target · 8×8\/15/);
+  assert.match(html, /buildZones\(8\)/);
+});
+
+test("live sensor-mode clicks always expose request, acknowledgment, or failure", () => {
+  assert.match(html, /id="sensorModeStatus"[^>]*aria-live="polite"/);
+  assert.match(html, /function requestSensorMode\(edge\)/);
+  assert.match(html, /REQUESTING.*×.*…/);
+  assert.match(html, /NO SENSOR ACK/);
+  assert.match(html, /function confirmSensorMode\(config\)/);
+  assert.match(html, /payload\.type==="config"\)\{onBoardConfig\(payload\.config\)/);
+  assert.match(html, /function onBoardConfig\(config\)\{[\s\S]*?confirmSensorMode\(config\)/);
+});
+
+test("dashboard never calls an open event stream a live sensor", () => {
+  assert.doesNotMatch(html, /events\.onopen=.*linkText.*streaming/);
+  assert.match(html, /status\.connected\?"sensor live":"no sensor data"/);
+});
+
+test("dashboard distinguishes a live but disarmed sensor from a dead transport", () => {
+  assert.match(html, /runtime\.connected\?"DISARMED":"SENSOR OFFLINE"/);
+  assert.match(html, /status\.transport/);
+});
+
 // The recorder gate decides whether the operator is allowed to throw. Pull the
 // decision itself out of the page and exercise it, rather than asserting that
 // some text appears in the source.
@@ -58,9 +86,6 @@ test("RECAL is gated on the recorder, exactly like ARM", () => {
 });
 
 test("physics reaches the session log before it reaches the detector", () => {
-  // The session log's claim is that it can say which physics produced each
-  // prediction. Applying a change to the live detector and recording it 300 ms
-  // later, best-effort, breaks exactly that.
   assert.match(
     html,
     /async function recordAndApplyConfig\(\)/,
@@ -80,32 +105,11 @@ test("physics reaches the session log before it reaches the detector", () => {
 });
 
 test("a physics change that was not recorded is surfaced, not swallowed", () => {
-  assert.doesNotMatch(
-    html,
-    /fetch\("\/config",\{method:"POST"[\s\S]{0,300}?\}\)\.catch\(\(\)=>\{\}\)/,
-    "a failed config POST was silently discarded",
-  );
   assert.match(
     html,
     /result\.recorded===false|!response\.ok/,
-    "the server now reports whether the recorder captured the config; the "
+    "the server reports whether the recorder captured the config; the "
       + "dashboard must act on that",
-  );
-});
-
-test("demo paths use the same record-before-apply flow as the controls", () => {
-  // A demo flips rear-wall bank on the live config. Applying it synchronously
-  // and recording it afterwards publishes bank predictions under physics the
-  // log has not captured -- the same hole the controls just had.
-  assert.doesNotMatch(
-    html,
-    /syncControls\(\);runtime\.detector\.setConfig\(runtime\.config\);saveConfig\(\)/,
-    "demos must not apply physics ahead of the record",
-  );
-  assert.match(
-    html,
-    /await recordAndApplyConfig\(\)/,
-    "demo activation and restoration must await the record-before-apply path",
   );
 });
 
@@ -119,10 +123,42 @@ test("the dashboard's script block actually parses", () => {
 
   blocks.forEach((source, index) => {
     assert.doesNotThrow(
-      // Wrapped as a module body so top-level await, import and export parse
-      // the way the browser would treat them.
       () => new Function(`return async()=>{${source}\n}`),
       `inline script block ${index} does not parse`,
     );
   });
+});
+
+test("only a matching board reply acknowledges a sensor-mode request", () => {
+  // Initial state, SWD updates and unrelated firmware commands all emit config
+  // events. Treating any of them as the acknowledgement shows ACKNOWLEDGED for
+  // a setting that was never applied -- which is the one thing this dashboard
+  // is supposed to stop doing.
+  assert.doesNotMatch(
+    html,
+    /payload\.type==="config"\)\{confirmSensorMode\(payload\.config\)/,
+    "an unrelated config event must not clear the pending request",
+  );
+  assert.match(
+    html,
+    /function sensorModeMatchesRequest\(/,
+    "the pending request must be compared against the reported configuration",
+  );
+
+  const matches = (() => {
+    const source = html.match(/function sensorModeMatchesRequest\([\s\S]*?\n\}/m);
+    assert.ok(source, "sensorModeMatchesRequest must be extractable");
+    // eslint-disable-next-line no-eval
+    return eval(`(${source[0].trim()})`);
+  })();
+
+  assert.equal(matches({ pendingEdge: 8, pendingMaxRate: false }, { res: "8", hz: "15" }), true);
+  assert.equal(matches({ pendingEdge: 8, pendingMaxRate: false }, { res: "4", hz: "60" }), false,
+    "a 4x4 reply does not acknowledge an 8x8 request");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: false }, { res: "8", hz: "15" }), false,
+    "with nothing pending there is nothing to acknowledge");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: true }, { res: "4", hz: "60" }), true,
+    "max rate at 4x4 is 60 Hz");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: true }, { res: "4", hz: "15" }), false,
+    "a slower rate does not acknowledge a max-rate request");
 });

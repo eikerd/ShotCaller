@@ -10,7 +10,7 @@
  *   PWR_EN   -> PB0 (A3)   -- gates the shield's AVDD load switch
  *   LPn      -> PB4 (D5)   -- must be high for the sensor to talk on I2C
  *   I2C_RST  -> PB3 (D3)   -- pulse high to reset the sensor's I2C block
- *   USART2   -> PA2 (TX) / PA3 (RX), routed to ST-LINK VCP, 115200 8N1
+ *   USART2   -> PA2 (TX) / PA3 (RX), routed to ST-LINK VCP, 460800 8N1
  */
 #include "main.h"
 #include <stdio.h>
@@ -27,14 +27,17 @@ static void MX_USART2_UART_Init(void);
 static void VL53_PowerUp(void);
 static void I2C_BusScan(void);
 static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id);
-static void ApplyConfig(VL53L5CX_Configuration *dev);
+static void PublishSwdFrame(VL53L5CX_ResultsData *r, uint32_t frame_id);
+static uint8_t ApplyConfig(VL53L5CX_Configuration *dev);
+static uint8_t RecoverSensor(VL53L5CX_Configuration *dev);
 static void PollCommands(VL53L5CX_Configuration *dev);
 
 /* Live sensor configuration, retunable from the host over UART (see
- * PollCommands). The product default is 4x4 at 60Hz: trajectory tracking is
- * limited by time resolution long before it is limited by zone count. */
-static uint8_t g_res       = VL53L5CX_RESOLUTION_4X4;
-static uint8_t g_hz        = 60;
+ * PollCommands). Start in the user's inspection mode so the first real frame
+ * is the full 8x8 matrix. Arming from the UI switches to 4x4 at 60Hz because
+ * trajectory tracking is limited by time resolution before zone count. */
+static uint8_t g_res       = VL53L5CX_RESOLUTION_8X8;
+static uint8_t g_hz        = 15;
 static uint8_t g_mode      = VL53L5CX_RANGING_MODE_CONTINUOUS;
 static uint8_t g_streaming = 1;
 /* Tracked because vl53l5cx_stop_ranging() polls for a stop acknowledgement the
@@ -42,6 +45,30 @@ static uint8_t g_streaming = 1;
  * (vl53l5cx_api.c:642) on every such call -- including the very first config
  * apply at boot. */
 static uint8_t g_ranging   = 0;
+
+/* Live debugger fallback. The on-board ST-LINK can read SRAM through SWD even
+ * when its separate virtual COM interface is unhealthy. Sequence fields form
+ * a seqlock, allowing the host to reject a frame read while this is changing. */
+#define SWD_FRAME_MAGIC 0x544F4853UL
+typedef struct {
+    uint32_t sequence;
+    uint32_t frame_id;
+    uint32_t tick_ms;
+    uint8_t edge;
+    uint8_t hz;
+    uint16_t zones;
+    uint8_t distance_q16[64];
+    uint32_t sequence_end;
+} SwdFrameSlot;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t write_count;
+    SwdFrameSlot slots[32];
+} SwdFrame;
+
+_Static_assert(sizeof(SwdFrameSlot) == 84, "host SWD slot layout changed");
+volatile SwdFrame g_swd_frame __attribute__((used, aligned(4)));
 
 int __io_putchar(int ch)
 {
@@ -59,30 +86,16 @@ int main(void)
 
     printf("\r\n--- ShotCaller / VL53L5CX bring-up ---\r\n");
 
-    VL53_PowerUp();
-    I2C_BusScan();
-
     VL53L5CX_Configuration dev;
     memset(&dev, 0, sizeof(dev));
     dev.platform.hi2c = &hi2c1;
     dev.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS; /* 0x52, 8-bit */
 
-    uint8_t is_alive = 0;
-    uint8_t status = vl53l5cx_is_alive(&dev, &is_alive);
-    if (status != VL53L5CX_STATUS_OK || !is_alive) {
-        printf("ERROR: VL53L5CX not detected on I2C1 (check wiring/addr)\r\n");
-        Error_Handler();
+    while (RecoverSensor(&dev) != VL53L5CX_STATUS_OK) {
+        /* A disconnected shield is recoverable: keep the serial diagnostics
+         * alive and retry instead of disappearing into Error_Handler(). */
+        HAL_Delay(1000);
     }
-    printf("VL53L5CX detected. Loading firmware (few hundred ms)...\r\n");
-
-    status = vl53l5cx_init(&dev);
-    if (status != VL53L5CX_STATUS_OK) {
-        printf("ERROR: vl53l5cx_init failed, status=%u\r\n", status);
-        Error_Handler();
-    }
-    printf("# init OK\r\n");
-
-    ApplyConfig(&dev);
 
     VL53L5CX_ResultsData results;
     uint32_t frame_id = 0;
@@ -91,13 +104,29 @@ int main(void)
         PollCommands(&dev);
 
         uint8_t ready = 0;
-        vl53l5cx_check_data_ready(&dev, &ready);
+        uint8_t status = vl53l5cx_check_data_ready(&dev, &ready);
+        if (status != VL53L5CX_STATUS_OK) {
+            printf("E,sensor-ready,status=%u\r\n", status);
+            if (RecoverSensor(&dev) != VL53L5CX_STATUS_OK) {
+                HAL_Delay(1000);
+            }
+            continue;
+        }
 
         if (ready) {
-            vl53l5cx_get_ranging_data(&dev, &results);
-            if (g_streaming) {
-                StreamFrame(&results, frame_id++);
+            status = vl53l5cx_get_ranging_data(&dev, &results);
+            if (status != VL53L5CX_STATUS_OK) {
+                printf("E,sensor-read,status=%u\r\n", status);
+                if (RecoverSensor(&dev) != VL53L5CX_STATUS_OK) {
+                    HAL_Delay(1000);
+                }
+                continue;
             }
+            PublishSwdFrame(&results, frame_id);
+            if (g_streaming) {
+                StreamFrame(&results, frame_id);
+            }
+            frame_id++;
             HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
         }
 
@@ -151,26 +180,74 @@ static void StreamFrame(VL53L5CX_ResultsData *r, uint32_t frame_id)
     UartWrite(frame_buf, n);
 }
 
+static void PublishSwdFrame(VL53L5CX_ResultsData *r, uint32_t frame_id)
+{
+    int zones = (g_res == VL53L5CX_RESOLUTION_8X8) ? 64 : 16;
+    uint32_t write_count = g_swd_frame.write_count;
+    volatile SwdFrameSlot *slot = &g_swd_frame.slots[write_count % 32U];
+    uint32_t writing = slot->sequence + 1U;
+    if ((writing & 1U) == 0U) writing++;
+
+    slot->sequence = writing;
+    __DMB();
+    g_swd_frame.magic = SWD_FRAME_MAGIC;
+    slot->frame_id = frame_id;
+    slot->tick_ms = HAL_GetTick();
+    slot->edge = (zones == 64) ? 8 : 4;
+    slot->hz = g_hz;
+    slot->zones = (uint16_t)zones;
+    for (int i = 0; i < zones; i++) {
+        int idx = VL53L5CX_NB_TARGET_PER_ZONE * i;
+        int distance = r->distance_mm[idx];
+        uint8_t status = r->target_status[idx];
+        if ((status == 5U || status == 9U) && distance >= 0 && distance < 4072) {
+            slot->distance_q16[i] = (uint8_t)((distance + 8) / 16);
+        } else {
+            slot->distance_q16[i] = 0xFFU;
+        }
+    }
+    __DMB();
+    slot->sequence_end = writing + 1U;
+    __DMB();
+    slot->sequence = writing + 1U;
+    __DMB();
+    g_swd_frame.write_count = write_count + 1U;
+}
+
 /* Reconfigure and (re)start ranging. Ranging must be stopped before
  * resolution or frequency can change -- the sensor rejects the write
  * otherwise, which is a quiet way to end up convinced a setting "didn't do
  * anything". */
-static void ApplyConfig(VL53L5CX_Configuration *dev)
+static uint8_t ApplyConfig(VL53L5CX_Configuration *dev)
 {
+    uint8_t status = VL53L5CX_STATUS_OK;
+    const char *stage = "stop";
+
     if (g_ranging) {
-        vl53l5cx_stop_ranging(dev);
+        status = vl53l5cx_stop_ranging(dev);
         g_ranging = 0;
+        if (status != VL53L5CX_STATUS_OK) goto failed;
     }
 
-    vl53l5cx_set_resolution(dev, g_res);
-    vl53l5cx_set_ranging_frequency_hz(dev, g_hz);
-    vl53l5cx_set_ranging_mode(dev, g_mode);
+    stage = "resolution";
+    status = vl53l5cx_set_resolution(dev, g_res);
+    if (status != VL53L5CX_STATUS_OK) goto failed;
+    stage = "frequency";
+    status = vl53l5cx_set_ranging_frequency_hz(dev, g_hz);
+    if (status != VL53L5CX_STATUS_OK) goto failed;
+    stage = "mode";
+    status = vl53l5cx_set_ranging_mode(dev, g_mode);
+    if (status != VL53L5CX_STATUS_OK) goto failed;
     /* A small projectile is normally in front of a stronger, static wall or
      * bin return. Closest-first keeps that projectile in target slot zero,
      * which is the slot streamed to the host. */
-    vl53l5cx_set_target_order(dev, VL53L5CX_TARGET_ORDER_CLOSEST);
+    stage = "target-order";
+    status = vl53l5cx_set_target_order(dev, VL53L5CX_TARGET_ORDER_CLOSEST);
+    if (status != VL53L5CX_STATUS_OK) goto failed;
 
-    vl53l5cx_start_ranging(dev);
+    stage = "start";
+    status = vl53l5cx_start_ranging(dev);
+    if (status != VL53L5CX_STATUS_OK) goto failed;
     g_ranging = 1;
 
     int edge = (g_res == VL53L5CX_RESOLUTION_8X8) ? 8 : 4;
@@ -180,6 +257,58 @@ static void ApplyConfig(VL53L5CX_Configuration *dev)
                      (g_mode == VL53L5CX_RANGING_MODE_CONTINUOUS) ? "cont" : "auto",
                      (g_res == VL53L5CX_RESOLUTION_8X8) ? 15 : 60);
     UartWrite(frame_buf, n);
+    return VL53L5CX_STATUS_OK;
+
+failed:
+    {
+        int n = snprintf(frame_buf, sizeof(frame_buf),
+                         "E,config,stage=%s,status=%u\r\n", stage, status);
+        UartWrite(frame_buf, n);
+    }
+    return status;
+}
+
+/* A failed range read previously left the board alive but permanently silent.
+ * Reset both sides of the I2C link, remove sensor power long enough to clear
+ * its internal state, reload the ULD firmware, and restore the requested mode.
+ * This same path is used at boot so startup and runtime recovery cannot drift. */
+static uint8_t RecoverSensor(VL53L5CX_Configuration *dev)
+{
+    uint8_t is_alive = 0;
+    uint8_t status;
+
+    g_ranging = 0;
+    HAL_GPIO_WritePin(VL53_LPN_GPIO_Port, VL53_LPN_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(VL53_PWR_EN_GPIO_Port, VL53_PWR_EN_Pin, GPIO_PIN_RESET);
+    HAL_I2C_DeInit(&hi2c1);
+    HAL_Delay(150);
+
+    MX_I2C1_Init();
+    VL53_PowerUp();
+
+    status = vl53l5cx_is_alive(dev, &is_alive);
+    if (status != VL53L5CX_STATUS_OK || !is_alive) {
+        printf("E,sensor-recovery,stage=alive,status=%u,alive=%u\r\n",
+               status, is_alive);
+        I2C_BusScan();
+        return (status != VL53L5CX_STATUS_OK) ? status : 1U;
+    }
+
+    printf("# sensor detected; loading firmware\r\n");
+    status = vl53l5cx_init(dev);
+    if (status != VL53L5CX_STATUS_OK) {
+        printf("E,sensor-recovery,stage=init,status=%u\r\n", status);
+        return status;
+    }
+
+    status = ApplyConfig(dev);
+    if (status != VL53L5CX_STATUS_OK) {
+        printf("E,sensor-recovery,stage=config,status=%u\r\n", status);
+        return status;
+    }
+
+    printf("# sensor recovery OK\r\n");
+    return VL53L5CX_STATUS_OK;
 }
 
 /* Single-character commands from the host, polled non-blocking so the
@@ -377,11 +506,9 @@ static void MX_I2C1_Init(void)
 static void MX_USART2_UART_Init(void)
 {
     huart2.Instance = USART2;
-    /* 921600 rather than 115200: an 8x8 frame with distance+status+signal is
-     * ~900 bytes, so 15Hz needs ~13.5KB/s and 115200 baud only carries
-     * ~11.5KB/s. At that rate the UART, not the sensor, would set the frame
-     * rate -- useless when measuring how fast the sensor can actually see. */
-    huart2.Init.BaudRate = 921600;
+    /* 460800 comfortably carries both 8x8/15 and 4x4/60 while giving the
+     * ST-LINK VCP and host CDC driver more timing margin than 921600. */
+    huart2.Init.BaudRate = 460800;
     huart2.Init.WordLength = UART_WORDLENGTH_8B;
     huart2.Init.StopBits = UART_STOPBITS_1;
     huart2.Init.Parity = UART_PARITY_NONE;

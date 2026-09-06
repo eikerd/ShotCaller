@@ -5,6 +5,7 @@ import socket
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from unittest import mock
@@ -100,6 +101,30 @@ class LocalServerTests(unittest.TestCase):
             server.server_close()
 
 
+class SensorLinkStatusTests(unittest.TestCase):
+    def test_open_serial_port_is_not_reported_live_until_frames_arrive(self):
+        link = viz_server.SensorLink("/dev/test-shotcaller", 921600)
+        link.ser = SimpleNamespace(is_open=True)
+
+        waiting = link.status(now=100.0)
+        self.assertTrue(waiting["serial_open"])
+        self.assertFalse(waiting["connected"])
+
+        link.last_frame_at = 99.25
+        self.assertTrue(link.status(now=100.0)["connected"])
+        self.assertFalse(link.status(now=102.0)["connected"])
+
+    def test_swd_frames_are_live_even_when_the_virtual_serial_port_is_silent(self):
+        link = viz_server.SensorLink("/dev/test-shotcaller", 460800)
+        link.ser = SimpleNamespace(is_open=True)
+
+        link.accept_frame({"id": 7}, transport="swd", received_at=100.0)
+
+        status = link.status(now=100.5)
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["transport"], "swd")
+        self.assertEqual(link.frames_seen, 1)
+        self.assertEqual(list(link.history), [{"id": 7}])
 class _StopReader(Exception):
     """Breaks reader_loop out of its infinite loop inside a test."""
 
@@ -126,19 +151,16 @@ class _FakeSerial:
 
 
 def _link_with(lines):
-    link = viz_server.SensorLink.__new__(viz_server.SensorLink)
-    link.port = "/dev/fake"
-    link.baud = 921600
+    """A SensorLink wired to a fake serial port.
+
+    Built through the real constructor deliberately. An earlier version used
+    __new__ and hand-set the attributes it happened to need, which silently
+    went stale twice as SensorLink grew `recorder` and then `stop_event` --
+    each time surfacing as an AttributeError in an unrelated test rather than
+    as the merge problem it actually was.
+    """
+    link = viz_server.SensorLink("/dev/fake", 921600)
     link.ser = _FakeSerial(lines)
-    link.lock = threading.Lock()
-    link.sub_lock = threading.Lock()
-    link.subscribers = set()
-    link.history = collections.deque(maxlen=64)
-    link.frames_seen = 0
-    link.parse_errors = 0
-    link.config = None
-    link.recorder = None
-    link.log = collections.deque(maxlen=64)
     return link
 
 

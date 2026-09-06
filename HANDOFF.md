@@ -5,16 +5,14 @@ rim classifies thrown objects as "in" vs "miss" and triggers audio samples.
 Long-term target is a standalone ESP32 build; current phase is bring-up on
 an STM32 Nucleo bench rig to validate the sensor before porting.
 
-**Status: live 3D trajectory prototype works end to end.** Firmware builds,
-flashes, boots in 4x4/60Hz closest-target mode, and streams frames into the
-browser trajectory lab. The host now performs calibrated background
-subtraction, 3D velocity/intercept estimation, an explicit event state machine,
-and virtual-rim in/miss classification. See `docs/SHOTCALLER-NEXT.md` for the
-geometry, event contract, constraints, and real-throw validation plan.
-
-Current phase is *physical calibration*: mount the rig, enter the measured can
-geometry, and collect labelled real throws. Synthetic behavior and the live
-transport are verified; real-world classification accuracy is not yet known.
+**Status: real 8x8 frames are live and continuously recorded through an SWD
+fallback.** The ST-LINK virtual COM port still delivers zero bytes, so firmware
+also publishes each real VL53L5CX result into a compact SRAM ring that the host
+reads through the working debug endpoint. The dashboard contains no simulated
+throw path and distinguishes `DISARMED` from `SENSOR OFFLINE`. SWD currently
+delivers about 3.4 UI frames/s; restoring VCP or using an external UART remains
+necessary for full-rate projectile tracking. See `docs/SHOTCALLER-NEXT.md` for
+evidence and the geometry/algorithm design.
 
 ## Hardware
 
@@ -26,8 +24,7 @@ transport are verified; real-world classification accuracy is not yet known.
   are F401RE / L476RG) -- required hand-porting the I2C platform layer
   and peripheral init.
 - Wiring: I2C1 on PB8 (SCL) / PB9 (SDA), USART2 debug output on PA2 (TX)
-  routed to the ST-LINK virtual COM port, **921600** 8N1 (raised from 115200
-  so the link is not the bottleneck when streaming frames -- see below).
+  routed to the ST-LINK virtual COM port, **460800** 8N1.
 - Shield control pins, confirmed against ST's stm32duino X-NUCLEO-53L5A1
   examples (`PWREN_PIN A3`, `LPN_PIN 5`, `I2C_RST_PIN 3`) translated through
   the Nucleo-64 Arduino pin map:
@@ -40,7 +37,7 @@ transport are verified; real-world classification accuracy is not yet known.
 
   PB3/PB4 are JTDO/NJTRST at reset; repurposing them as GPIO is safe only
   because we debug over 2-wire SWD (PA13/PA14).
-- Serial device: `/dev/cu.usbmodem2244103` (may change if unplugged/
+- Serial device: `/dev/cu.usbmodem11203` (may change if unplugged/
   replugged -- check with `ls /dev/cu.usbmodem*`).
 
 ## Command-line workflow (no STM32CubeIDE GUI needed)
@@ -63,12 +60,10 @@ Expected boot output:
 
 ```
 --- ShotCaller / VL53L5CX bring-up ---
-I2C1 scan: 0x29
-  expecting 0x29 (7-bit) = 0x52 (8-bit) for VL53L5CX
-VL53L5CX detected. Loading firmware (few hundred ms)...
-# init OK
-C,res=4,hz=60,mode=cont,max_hz=60,target=closest
-F,0,2697,4,60,1485:6:10,...
+# sensor detected; loading firmware
+C,res=8,hz=15,mode=cont,max_hz=15,target=closest
+# sensor recovery OK
+F,0,2697,8,15,1485:6:10,...
 ```
 
 ## The live scope + shot detector (`tools/`)
@@ -129,8 +124,8 @@ fallback. All events also dispatch as `window` events for external hooks.
 
 Enter the can dimensions and mount height, use the recommended pitch, correct
 X/Y flips, keep the opening empty, and press **Arm system**. The dashboard
-captures the empty-scene baseline automatically. The product mode is 4x4 at
-60Hz; 8x8 remains available for spatial inspection.
+captures the empty-scene baseline automatically. Firmware boots in 8x8/15 for
+spatial inspection; arming switches to 4x4/60 for trajectory timing.
 
 ### Labelling and scoring
 
