@@ -17,7 +17,14 @@ const PROC_MS = 1, READOUT_MS = Number(process.env.READOUT_MS || 8);
 const CAN = { hw: DEFAULT_CONFIG.canWidthMm / 2, hd: DEFAULT_CONFIG.canDepthMm / 2, depth: 600 };
 const SENSOR = { x: 0, y: DEFAULT_CONFIG.sensorHeightMm, z: -CAN.hd };
 
-let seed = 12345;
+const BASE_SEED = 12345;
+let seed = BASE_SEED;
+// One mutable stream shared across the whole sweep meant each row was
+// measured against different random throws, so a difference between rows
+// could be sampling noise rather than the geometry being compared -- and a
+// row's value moved when an unrelated earlier row was added or removed.
+// Seeding per trial index gives every configuration matched scenarios.
+const setTrialSeed = index => { seed = (BASE_SEED + index * 2654435761) >>> 0; };
 const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 const randn = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
 
@@ -152,7 +159,8 @@ function synthFrame(rays, mode, path, tEnd, obj, id, cfg) {
 }
 
 // ---- one trial ----------------------------------------------------------------
-function trial({ objKey, modeKey, pitch, throwSpec }) {
+function trial({ objKey, modeKey, pitch, throwSpec, trialIndex = 0 }) {
+  setTrialSeed(trialIndex);
   const obj = OBJECTS[objKey], mode = MODES[modeKey];
   const cfg = { ...DEFAULT_CONFIG, pitchDeg: pitch, foregroundDeltaMm: Number(process.env.FG || DEFAULT_CONFIG.foregroundDeltaMm) };
   const rays = buildZoneRays(mode.edge, cfg);
@@ -180,7 +188,12 @@ function trial({ objKey, modeKey, pitch, throwSpec }) {
     const objZones = f.sig.map((v, z) => (v !== 20 ? z : -1)).filter(z => z >= 0);
     if (objZones.length) {
       detectedFrames += 1; zonesPerFrame.push(objZones.length); objZones.forEach(z => zonesSeen.add(z));
-      if (firstSeen == null) firstSeen = tEnd - mode.integ / 2;
+      // f.t is when the frame reaches the detector: exposure midpoint plus
+      // integration, processing and readout. The detector cannot act on a
+      // frame earlier than that, so lead measured from the midpoint
+      // overstates it by ~17 ms at 4x4/60 and ~42 ms at 8x8/15 -- the same
+      // order as the leads this sweep exists to compare.
+      if (firstSeen == null) firstSeen = f.t;
     }
     det.ingestFrame(f);
     if (process.env.DEBUG && objZones.length) {
@@ -196,7 +209,7 @@ function trial({ objKey, modeKey, pitch, throwSpec }) {
   const verdict = ev("in") ? "in" : ev("miss") ? "miss" : "none";
   const inbound = ev("inbound");
   const predPoint = inbound && inbound.prediction && inbound.prediction.point;
-  const framesBefore = frames.filter(f => f.sig.some(v => v !== 20) && (f.t - PROC_MS - READOUT_MS - mode.integ / 2) < cross.t).length;
+  const framesBefore = frames.filter(f => f.sig.some(v => v !== 20) && f.t < cross.t).length;
   return {
     speed: cross.speed, descent: cross.descentDeg, truthIn, verdict,
     correct: verdict === (truthIn ? "in" : "miss"),
@@ -229,17 +242,21 @@ const objs = (process.env.OBJ || "wad,can").split(",");
 const modes = (process.env.MODES || Object.keys(MODES).join("|")).split("|");
 const throwsSel = (process.env.THROWS || Object.keys(THROWS).join("|")).split("|");
 
-console.log("pitch | mode | object | throw | speed m/s | descent° | seen% | frames pre-cross | zones/frame | zones total | first-seen lead | inbound lead | vel err% | pred err mm | verdict ok% | verdict delay");
-for (const pitch of pitches) for (const modeKey of modes) for (const objKey of objs) for (const throwKey of throwsSel) {
-  const rows = [];
-  for (let i = 0; i < N; i += 1) { const r = trial({ objKey, modeKey, pitch, throwSpec: THROWS[throwKey] }); if (r) rows.push(r); }
-  const num = k => rows.map(r => r[k]).filter(Number.isFinite);
-  console.log([pitch, modeKey, objKey, throwKey,
-    fmt(mean(num("speed")) / 1000, 1), fmt(mean(num("descent"))),
-    fmt(100 * rows.filter(r => r.detectedFrames > 0).length / rows.length),
-    fmt(mean(num("framesBefore")), 1), fmt(mean(num("meanZones")), 1), fmt(mean(num("zonesSeen")), 1),
-    fmt(mean(num("firstSeenLeadMs"))), `${fmt(mean(num("inboundLeadMs")))} (${num("inboundLeadMs").length}/${rows.length})`,
-    fmt(mean(num("velErrPct").map(Math.abs))), fmt(mean(num("predErrMm"))),
-    fmt(100 * rows.filter(r => r.correct).length / rows.length), fmt(mean(num("verdictDelayMs"))),
-  ].join(" | "));
+if (require.main === module) {
+  console.log("pitch | mode | object | throw | speed m/s | descent° | seen% | frames pre-cross | zones/frame | zones total | first-seen lead | inbound lead | vel err% | pred err mm | verdict ok% | verdict delay");
+  for (const pitch of pitches) for (const modeKey of modes) for (const objKey of objs) for (const throwKey of throwsSel) {
+    const rows = [];
+    for (let i = 0; i < N; i += 1) { const r = trial({ objKey, modeKey, pitch, throwSpec: THROWS[throwKey], trialIndex: i }); if (r) rows.push(r); }
+    const num = k => rows.map(r => r[k]).filter(Number.isFinite);
+    console.log([pitch, modeKey, objKey, throwKey,
+      fmt(mean(num("speed")) / 1000, 1), fmt(mean(num("descent"))),
+      fmt(100 * rows.filter(r => r.detectedFrames > 0).length / rows.length),
+      fmt(mean(num("framesBefore")), 1), fmt(mean(num("meanZones")), 1), fmt(mean(num("zonesSeen")), 1),
+      fmt(mean(num("firstSeenLeadMs"))), `${fmt(mean(num("inboundLeadMs")))} (${num("inboundLeadMs").length}/${rows.length})`,
+      fmt(mean(num("velErrPct").map(Math.abs))), fmt(mean(num("predErrMm"))),
+      fmt(100 * rows.filter(r => r.correct).length / rows.length), fmt(mean(num("verdictDelayMs"))),
+    ].join(" | "));
+  }
 }
+
+module.exports = { trial, setTrialSeed, MODES, OBJECTS, THROWS };
