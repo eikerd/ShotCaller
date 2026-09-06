@@ -267,5 +267,43 @@ class MutationAuthTests(unittest.TestCase):
         self.assertEqual(status, 403)
 
 
+class SessionStorageGuardTests(unittest.TestCase):
+    def test_recording_refuses_to_start_on_a_nearly_full_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(viz_server, "free_bytes", return_value=1024):
+                with self.assertRaises(OSError) as caught:
+                    viz_server.SessionRecorder(tmp, "/dev/fake", 921600)
+        self.assertIn("free space", str(caught.exception).lower())
+
+    def test_recording_stops_with_a_clear_error_before_the_disk_fills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(
+                viz_server, "free_bytes",
+                return_value=viz_server.MIN_FREE_BYTES + 1,
+            ):
+                rec = viz_server.SessionRecorder(tmp, "/dev/fake", 921600)
+
+            frame = {"id": 1, "t": 1, "edge": 4, "hz": 60,
+                     "d": [300] * 16, "s": [5] * 16, "sig": [20] * 16}
+
+            with mock.patch.object(
+                viz_server, "free_bytes",
+                return_value=viz_server.MIN_FREE_BYTES + 1,
+            ):
+                for _ in range(viz_server.FREE_SPACE_CHECK_EVERY):
+                    self.assertTrue(rec.record_frame(frame))
+
+            # The disk fills under a running session.
+            with mock.patch.object(viz_server, "free_bytes", return_value=1024):
+                for _ in range(viz_server.FREE_SPACE_CHECK_EVERY):
+                    if not rec.record_frame(frame):
+                        break
+                else:
+                    self.fail("recorder must stop before the filesystem does")
+
+        self.assertIsNotNone(rec.error)
+        self.assertIn("free space", rec.error.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

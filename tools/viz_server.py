@@ -48,6 +48,20 @@ HISTORY = 1800
 # HAL_GetTick() is uint32_t milliseconds; it wraps after ~49.7 days.
 TICK_WRAP = 2 ** 32
 
+# A continuous session writes roughly 30 KB/s at 4x4/60 Hz, so an unattended
+# rig fills a disk in days. Recording is the precondition for every throw the
+# operator is allowed to make, so it has to fail loudly and early rather than
+# hit ENOSPC mid-session. This floor is about 4 hours of headroom.
+MIN_FREE_BYTES = 512 * 1024 * 1024
+# statvfs per frame would be wasteful; once per ~10 s at 60 Hz is plenty.
+FREE_SPACE_CHECK_EVERY = 600
+
+
+def free_bytes(path):
+    """Bytes available to an unprivileged writer under path."""
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
 
 THROWS_DIR = os.path.join(REPO, "captures", "throws")
 CONFIG_PATH = os.path.join(REPO, "captures", "detector.json")
@@ -66,6 +80,17 @@ class SessionRecorder:
 
         sessions_dir = os.path.join(captures_dir, "sessions")
         os.makedirs(sessions_dir, exist_ok=True)
+
+        # Refuse to open a session we cannot finish. Sessions are never deleted
+        # automatically: a recorded throw is ground truth the operator cannot
+        # regenerate, so retention stays a human decision.
+        available = free_bytes(sessions_dir)
+        if available < MIN_FREE_BYTES:
+            raise OSError(
+                f"refusing to record: {available // (1024 * 1024)} MB free space "
+                f"below the {MIN_FREE_BYTES // (1024 * 1024)} MB floor at "
+                f"{sessions_dir}"
+            )
         stamp = time.strftime("%Y%m%d-%H%M%S",
                               time.localtime(self.started_at))
         base = os.path.join(sessions_dir, f"session-{stamp}")
@@ -101,6 +126,15 @@ class SessionRecorder:
                 self._file.flush()
                 if count_frame:
                     self.frames_recorded += 1
+                    if self.frames_recorded % FREE_SPACE_CHECK_EVERY == 0:
+                        available = free_bytes(os.path.dirname(self.path))
+                        if available < MIN_FREE_BYTES:
+                            self.error = (
+                                f"stopped recording: {available // (1024 * 1024)} MB "
+                                f"free space below the "
+                                f"{MIN_FREE_BYTES // (1024 * 1024)} MB floor"
+                            )
+                            return False
                 return True
             except (OSError, ValueError) as exc:
                 self.error = str(exc)
