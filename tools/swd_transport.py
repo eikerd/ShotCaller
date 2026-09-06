@@ -13,6 +13,9 @@ SWD_RING_SLOTS = 32
 SWD_RING_HEADER_STRUCT = struct.Struct("<II")
 SWD_FRAME_STRUCT = struct.Struct("<IIIBBH64BI")
 STLINK_Q_BUFFER_SIZE = 1024 * 100
+# The seqlock marker leading each ring slot, read on its own around a copy.
+SEQUENCE_SIZE = 4
+SEQUENCE_STRUCT = struct.Struct("<I")
 
 
 class SwdUnavailable(RuntimeError):
@@ -109,6 +112,13 @@ def decode_swd_frame(payload, received_at=None):
     }
 
 
+def decode_slot_sequence(payload):
+    """The leading seqlock marker of a ring slot, or None if unreadable."""
+    if len(payload) < SEQUENCE_SIZE:
+        return None
+    return SEQUENCE_STRUCT.unpack_from(payload)[0]
+
+
 def decode_ring_header(payload):
     if len(payload) < SWD_RING_HEADER_STRUCT.size:
         return None
@@ -182,9 +192,22 @@ def iter_frames(elf_path, stop_requested=lambda: False, poll_seconds=0.008):
                 address + SWD_RING_HEADER_STRUCT.size
                 + slot_index * SWD_FRAME_STRUCT.size
             )
-            frame = decode_swd_frame(
-                probe.read(slot_address, SWD_FRAME_STRUCT.size)
-            )
+            # Sample the leading sequence on its own, either side of the copy.
+            # Taking both markers and the payload in one non-atomic SWD read is
+            # not a seqlock: a writer that starts after the host has read the
+            # old leading marker but before it reaches the trailing one leaves
+            # two matching stale markers wrapped around mixed payload, and the
+            # torn frame is accepted.
+            before = decode_slot_sequence(probe.read(slot_address, SEQUENCE_SIZE))
+            body = probe.read(slot_address, SWD_FRAME_STRUCT.size)
+            after = decode_slot_sequence(probe.read(slot_address, SEQUENCE_SIZE))
+            if (
+                before is None or after is None
+                or before != after or before & 1
+            ):
+                time.sleep(poll_seconds)
+                continue
+            frame = decode_swd_frame(body)
             if frame is not None and write_count != last_write_count:
                 last_write_count = write_count
                 frame.pop("_sequence")

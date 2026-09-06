@@ -24,7 +24,8 @@ test("live sensor-mode clicks always expose request, acknowledgment, or failure"
   assert.match(html, /REQUESTING.*×.*…/);
   assert.match(html, /NO SENSOR ACK/);
   assert.match(html, /function confirmSensorMode\(config\)/);
-  assert.match(html, /payload\.type==="config".*confirmSensorMode\(payload\.config\)/s);
+  assert.match(html, /payload\.type==="config"\)\{onBoardConfig\(payload\.config\)/);
+  assert.match(html, /function onBoardConfig\(config\)\{[\s\S]*?confirmSensorMode\(config\)/);
 });
 
 test("dashboard never calls an open event stream a live sensor", () => {
@@ -126,4 +127,38 @@ test("the dashboard's script block actually parses", () => {
       `inline script block ${index} does not parse`,
     );
   });
+});
+
+test("only a matching board reply acknowledges a sensor-mode request", () => {
+  // Initial state, SWD updates and unrelated firmware commands all emit config
+  // events. Treating any of them as the acknowledgement shows ACKNOWLEDGED for
+  // a setting that was never applied -- which is the one thing this dashboard
+  // is supposed to stop doing.
+  assert.doesNotMatch(
+    html,
+    /payload\.type==="config"\)\{confirmSensorMode\(payload\.config\)/,
+    "an unrelated config event must not clear the pending request",
+  );
+  assert.match(
+    html,
+    /function sensorModeMatchesRequest\(/,
+    "the pending request must be compared against the reported configuration",
+  );
+
+  const matches = (() => {
+    const source = html.match(/function sensorModeMatchesRequest\([\s\S]*?\n\}/m);
+    assert.ok(source, "sensorModeMatchesRequest must be extractable");
+    // eslint-disable-next-line no-eval
+    return eval(`(${source[0].trim()})`);
+  })();
+
+  assert.equal(matches({ pendingEdge: 8, pendingMaxRate: false }, { res: "8", hz: "15" }), true);
+  assert.equal(matches({ pendingEdge: 8, pendingMaxRate: false }, { res: "4", hz: "60" }), false,
+    "a 4x4 reply does not acknowledge an 8x8 request");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: false }, { res: "8", hz: "15" }), false,
+    "with nothing pending there is nothing to acknowledge");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: true }, { res: "4", hz: "60" }), true,
+    "max rate at 4x4 is 60 Hz");
+  assert.equal(matches({ pendingEdge: null, pendingMaxRate: true }, { res: "4", hz: "15" }), false,
+    "a slower rate does not acknowledge a max-rate request");
 });
