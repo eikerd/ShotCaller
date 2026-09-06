@@ -108,3 +108,21 @@ test("demo paths use the same record-before-apply flow as the controls", () => {
     "demo activation and restoration must await the record-before-apply path",
   );
 });
+
+test("the dashboard's script block actually parses", () => {
+  // Regex assertions over the source cannot see a syntax error, and a syntax
+  // error in this page's single script block stops the whole dashboard from
+  // initialising. Parse it for real.
+  const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)]
+    .map(match => match[1]);
+  assert.ok(blocks.length > 0, "viz.html must carry an inline script block");
+
+  blocks.forEach((source, index) => {
+    assert.doesNotThrow(
+      // Wrapped as a module body so top-level await, import and export parse
+      // the way the browser would treat them.
+      () => new Function(`return async()=>{${source}\n}`),
+      `inline script block ${index} does not parse`,
+    );
+  });
+});
