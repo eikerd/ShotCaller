@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PR Review Arena</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131826; --panel2: #1a2136;
+    --border: #26304a; --text: #dce3f2; --dim: #8391b0;
+    --gold: #ffd447; --cyan: #4ee1e8; --magenta: #ff5fa2;
+    --green: #4ade80; --red: #f87171; --orange: #fb923c; --purple: #a78bfa;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    padding: 16px; max-width: 1200px; margin: auto;
+  }
+  h1 { font-size: 20px; letter-spacing: 1px; }
+  .glow { text-shadow: 0 0 12px currentColor; }
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px;
+    background: linear-gradient(135deg, #131826, #1b1430);
+    margin-bottom: 12px;
+  }
+  .badge {
+    padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 700;
+    border: 1px solid currentColor;
+  }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px;
+  }
+  .stat { text-align: center; }
+  .stat .num { font-size: 26px; font-weight: 800; }
+  .stat .lbl {
+    font-size: 11px; color: var(--dim); text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .bar-wrap {
+    background: var(--panel2); border-radius: 6px; height: 10px;
+    overflow: hidden; margin-top: 6px;
+  }
+  .bar { height: 100%; border-radius: 6px; transition: width .6s; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; color: var(--dim); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px;
+    border-bottom: 1px solid var(--border); padding: 6px 8px;
+  }
+  td { padding: 6px 8px; border-bottom: 1px solid #1c2438; }
+  tr:last-child td { border-bottom: none; }
+  .num-cell { text-align: right; font-variant-numeric: tabular-nums; }
+  details {
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--panel); margin-bottom: 8px; overflow: hidden;
+  }
+  /* ⚠️ TWO ROWS, not one. Severity, reviewer, the blind-spot eye and the
+     status pill are short and fixed; the title is not, and in a 280px column a
+     single flex line either shredded it one-word-per-line or let the pill sit
+     on top of it. The chips share the first row — pill hard right — and the
+     title takes the second, where it wraps like prose. Still one card, still
+     collapsed, still scannable down the column: severity and status line up
+     vertically across every card in the round. */
+  summary {
+    cursor: pointer; padding: 10px 14px; font-weight: 700;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px;
+    list-style: none; user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "▸"; color: var(--cyan); transition: transform .2s; flex: none;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  details .body { padding: 0 14px 12px; }
+  /* ⚠️ `flex: none` and `nowrap`, or the pill is the thing that gives when a
+     column is narrow: at four rounds across it shrank to "FIXE" and "REBUTT",
+     clipped at the card's edge. The status is the one word on a collapsed card
+     that must always be readable. */
+  .pill {
+    font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px;
+    flex: none; white-space: nowrap;
+  }
+  /* The title is the only part allowed to take the slack, and it needs
+     `min-width: 0` or a flex item refuses to shrink below its content. */
+  .f-title { flex: 1 0 100%; order: 2; min-width: 0; line-height: 1.35; }
+  .pill { margin-left: auto; }
+  .sev-S, .sev-M, .sev-L, .sev-XL, .missed-flag { flex: none; }
+  summary > .rev-coderabbit, summary > .rev-greptile,
+  summary > .rev-copilot { flex: none; }
+  .fixed { background: #113322; color: var(--green); }
+  .rebutted { background: #331a11; color: var(--orange); }
+  .open-issue { background: #331122; color: var(--magenta); }
+  .sev-S { color: var(--green); } .sev-M { color: var(--gold); }
+  .sev-L { color: var(--orange); } .sev-XL { color: var(--red); }
+  .rev-coderabbit { color: var(--magenta); }
+  .rev-greptile { color: var(--cyan); }
+  .rev-copilot { color: var(--purple); }
+  .rev-claude { color: var(--gold); }
+  /* ⚠️ auto-fit, not repeat(3, …), and `align-items: start`.
+     Three rounds is the protocol, but a cycle that needs a fourth got it
+     orphaned on a row of its own with three empty columns beside it; and
+     stretching every column to the tallest left a 2-finding round as a panel
+     of dead space next to a 12-finding one. Content sets the height. */
+  .rounds {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    align-items: start;
+    gap: 10px;
+  }
+  .round-hd { text-wrap: balance; }
+  .round-hd {
+    font-size: 12px; font-weight: 800; letter-spacing: 2px;
+    text-transform: uppercase; margin: 4px 0 8px; text-align: center;
+  }
+  .finding-line {
+    display: flex; gap: 8px; align-items: center; font-size: 12px;
+    padding: 4px 0; flex-wrap: wrap;
+  }
+  .conf { color: var(--dim); font-size: 11px; }
+  footer { margin-top: 12px; color: var(--dim); font-size: 12px; text-align: center; }
+  /* --- wouldHaveMissed / value scoreboard --- */
+  .missed-flag { font-size: 12px; }
+  .board-row td { padding: 8px; }
+  .board-name { font-weight: 800; letter-spacing: 1px; }
+  .blindspot {
+    color: var(--gold); font-weight: 800; text-shadow: 0 0 8px var(--gold);
+  }
+  /* An unmeasured cost is a dash, never a zero. See the note in the ledger. */
+  .unmeasured { color: var(--dim); font-style: italic; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 4px;
+  }
+  /* --- the 24-hour strip: WHEN this work happened, and what else was running.
+     Asked for 2026-09-04: a report with no clock on it leaves the reader
+     guessing which stretch of the day it summarises. One axis, shared by the
+     PR's own span (top) and every session active in the window (lanes). --- */
+  .tl-axis { position: relative; height: 16px; margin: 0 0 4px; }
+  .tl-tick {
+    position: absolute; top: 0; transform: translateX(-50%);
+    font-size: 10px; color: var(--dim); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .tl-tick::after {
+    content: ""; position: absolute; left: 50%; top: 14px; width: 1px;
+    height: 4px; background: var(--border);
+  }
+  .tl-lane {
+    position: relative; height: 14px; background: var(--panel2);
+    border-radius: 4px; overflow: hidden;
+  }
+  .tl-seg { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+  .tl-work { height: 22px; }
+  .tl-work .tl-seg { box-shadow: 0 0 10px var(--cyan); }
+  .tl-now {
+    position: absolute; top: -3px; bottom: -3px; width: 2px;
+    background: var(--gold); box-shadow: 0 0 8px var(--gold); z-index: 2;
+  }
+  .tl-grid {
+    display: grid; grid-template-columns: minmax(260px, 3fr) 5fr auto;
+    gap: 6px 12px; align-items: center; font-size: 12px;
+  }
+  .tl-grid > .tl-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tl-chip {
+    font-size: 10px; padding: 0 6px; border-radius: 99px; margin-right: 4px;
+    border: 1px solid var(--border); color: var(--dim); white-space: nowrap;
+  }
+  .tl-spend {
+    text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .tl-caption { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .tl-live { color: var(--gold); font-weight: 700; }
+  @media (max-width: 800px) {
+    .grid, .rounds { grid-template-columns: 1fr; }
+    .tl-grid { grid-template-columns: 1fr; }
+    .tl-grid > .tl-spend { text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<!--
+  ============================================================================
+  EDIT ONLY THIS JSON BLOCK. Never the HTML, the CSS, or the render script.
+  ============================================================================
+  reviewer   : coderabbit | greptile | copilot     (colour-coded)
+  severity   : S | M | L | XL                      (t-shirt, green → red)
+  status     : fixed | rebutted | open
+  confidence : 0-100, the agent's own confidence in its response
+  wouldHaveMissed : boolean. ANSWER HONESTLY — would you have caught this
+                    without the external reviewer? Do not flatter yourself and
+                    do not flatter the reviewers. This one field is the whole
+                    measurement: it is what tells you whether the review
+                    subscriptions are earning their keep.
+  count      : optional, default 1. Use it when ONE card stands for several
+               findings of the same shape ("nine stale comments") so the
+               scoreboard agrees with the headline without nine cards.
+  pr.repo    : optional "owner/repo"; without it the header takes the
+               owner/repo segment of pr.url. Either way the project is named
+               in the header, in gold, next to the arena title.
+  costUSD    : a number, or null if it has not been measured. null renders as
+               "—", never as $0.00; a zero would be a measurement nobody took.
+  timeline   : OPTIONAL (added 2026-09-04). The 24-hour strip under the header.
+               Omit it and the report renders exactly as before.
+      work       : { start, end } ISO instants — the stretch this PR's work
+                   covers. The strip says "from X to Y · N h M min · stopped
+                   K min ago", and the "ago" ticks live.
+      generatedAt: ISO instant the sessions were scanned; the window is the
+                   24 h ending here, sliding to "now" while the report is
+                   less than 12 h old.
+      sessions   : every session active in the window, from
+                   ~/.claude/hooks/sessions-24h.py — id, project, title, model,
+                   segments [[start,end],…], tokens, costUSD. Fill it by
+                   leaving `sessions` out: reports/make-report.py runs the
+                   script and inserts it. Overwrite any `title` that reads
+                   badly; the script's titles are the first prompt, not a
+                   summary.
+  ============================================================================
+-->
+<script id="report-data" type="application/json">
+{
+  "pr": {
+    "number": 1,
+    "title": "Shot detector core and 3D trajectory lab",
+    "url": "https://github.com/eikerd/ShotCaller/pull/1",
+    "branch": "feat/detector-3d-lab",
+    "date": "2026-09-06",
+    "verdict": "MERGED"
+  },
+  "score": {
+    "found": 6,
+    "fixed": 5,
+    "rebutted": 1,
+    "grade": "B"
+  },
+  "timeline": {
+    "work": {
+      "start": "2026-09-06T18:05:00Z",
+      "end": "2026-09-06T18:40:00Z",
+      "sessionIds": [
+        "01Hj5Cw55KbeyAFyCBkbggjr"
+      ]
+    }
+  },
+  "rounds": [
+    {
+      "label": "Round 1",
+      "findings": [
+        {
+          "reviewer": "greptile",
+          "severity": "XL",
+          "title": "Resolution change silently kills detection",
+          "detail": "Switching the board between 4x4 and 8x8 while the detector is ARMED leaves the per-zone baseline tied to the old grid. Reading the code, FrameProjector.addBaselineFrame does reset on an edge change (shot_model.js:217) -- but that line is only reachable while CALIBRATING. Once ARMED, ingestFrame calls observationForFrame directly, which returns null on any edge mismatch, forever. Detection stops dead with no visible symptom, and a projectile already being tracked is finished as a miss. The reset was unreachable exactly when it mattered.",
+          "claudeResponse": "Confirmed and worse than reported. Moved the edge-change check into ingestFrame so a resolution switch recalibrates and tells the operator. Failing test written first: 'an armed detector recalibrates when the board changes resolution'. Commit 395a8ba.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "greptile",
+          "severity": "L",
+          "title": "Mutation endpoints lack authorization",
+          "detail": "/cmd, /save and /throws/delete were state-changing GETs on a loopback HTTP server with no origin check. Any page the operator visits could retune the attached sensor with <img src=\"http://127.0.0.1:8420/cmd?c=8\">, or delete a labelled throw by guessing its timestamp ID. A rebound hostname resolving to 127.0.0.1 would also have read as same-origin.",
+          "claudeResponse": "Confirmed. Mutations now require POST, which forces a CORS preflight this server never answers. Every request is checked for a loopback Host (closing DNS rebinding) and a local Origin. GET /config stays a GET -- it only reads saved geometry. Dashboard command() posts to match. Five failing tests written first. Commit c9de759.",
+          "confidence": 95,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "greptile",
+          "severity": "M",
+          "title": "Configuration failures report success",
+          "detail": "ApplyConfig ignores every VL53L5CX driver status, then sets g_ranging and announces the requested configuration unconditionally. A failed I2C write leaves the host believing a configuration is active that never took, and the false g_ranging makes the next reconfiguration call stop_ranging on a sensor that never started -- a documented five-second timeout.",
+          "claudeResponse": "Correct finding, but already fixed in commit a7e3cc7 on feat/live-only-dashboard (PR 4 of this sequence), which gives ApplyConfig a uint8_t return, checks every status with a goto failed, and reports E,config,stage=<stage>,status=<n>. Fixing it again here would only create a conflict when PR 4 merges. Verified by diffing the branch tips before declining.",
+          "confidence": 100,
+          "status": "rebutted",
+          "wouldHaveMissed": false
+        },
+        {
+          "reviewer": "greptile",
+          "severity": "M",
+          "title": "Initial board configuration is discarded",
+          "detail": "reader_loop drops the first line unconditionally as a presumed mid-frame fragment. But open() flushes the input buffer and then sends '?' asking the board to re-announce, so the first whole line is normally the C, reply. /api/status and every freshly connected dashboard came up with no board configuration until some later command triggered another announcement.",
+          "claudeResponse": "Confirmed. The first line is now discarded only when it is not already a complete record (F, / C, / E, prefix), so a genuine mid-frame fragment is still dropped. Two failing tests written first, one for each half of that behaviour. Commit 292135f.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "greptile",
+          "severity": "S",
+          "title": "Tick rollover breaks timing after 49.7 days",
+          "detail": "The firmware streams the raw uint32_t HAL_GetTick() value while the host treats timestamps as monotonic. At the wrap the value goes backwards, which can stop an active track from ever expiring or leave the detector in cooldown until the next counter cycle.",
+          "claudeResponse": "Confirmed, though the rig is USB-tethered and unlikely to run 49.7 days. Fixed at the parser boundary -- _unwrap_tick tracks the last raw value and adds a 2^32 epoch on a large backwards jump -- rather than teaching track expiry, cooldown and velocity each about the wrap. Commit 292135f.",
+          "confidence": 90,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "greptile",
+          "severity": "S",
+          "title": "Labelled throw saves can collide",
+          "detail": "Throw IDs carry one-second precision and files were opened in truncating mode, so two saves inside the same second -- a double-click before the UI disables its buttons, or two dashboard tabs -- write to the same path and the second silently replaces the first. Calibration ground truth is exactly the data you cannot regenerate.",
+          "claudeResponse": "Confirmed. save_throw now creates exclusively with O_CREAT|O_EXCL and suffixes on collision, so a labelled throw is never silently replaced. Commit 292135f.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        }
+      ]
+    },
+    {
+      "label": "Round 2",
+      "findings": []
+    },
+    {
+      "label": "Round 3",
+      "findings": []
+    }
+  ],
+  "sessions": [
+    {
+      "name": "Repo creation, history restructure, PR 1 through two review rounds",
+      "model": "claude-opus-5[1m]",
+      "inputTokens": 376,
+      "outputTokens": 150498,
+      "cacheReadTokens": 23810662,
+      "cacheWriteTokens": 433393,
+      "costUSD": 20.0
+    }
+  ],
+  "projectRunningTotalUSD": 1322.69
+}
+</script>
+
+<div id="app"></div>
+
+<script>
+const D = JSON.parse(document.getElementById("report-data").textContent);
+const fmt = (n) => (typeof n === "number" ? n.toLocaleString("en-US") : "—");
+const usd = (n) => (typeof n === "number" ? "$" + n.toFixed(2) : "—");
+const revClass = (r) => "rev-" + r.toLowerCase();
+const statusPill = (s) =>
+  s === "fixed"
+    ? '<span class="pill fixed">FIXED ✔</span>'
+    : s === "rebutted"
+      ? '<span class="pill rebutted">REBUTTED ⚔</span>'
+      : '<span class="pill open-issue">OPEN ●</span>';
+const sev = (s) => `<b class="sev-${s}">[${s}]</b>`;
+
+const totals = D.sessions.reduce(
+  (a, s) => ({
+    inp: a.inp + (s.inputTokens ?? 0),
+    out: a.out + (s.outputTokens ?? 0),
+    cr: a.cr + (s.cacheReadTokens ?? 0),
+    cw: a.cw + (s.cacheWriteTokens ?? 0),
+    cost: typeof s.costUSD === "number" ? a.cost + s.costUSD : a.cost,
+    unpriced: a.unpriced + (typeof s.costUSD === "number" ? 0 : 1),
+  }),
+  { inp: 0, out: 0, cr: 0, cw: 0, cost: 0, unpriced: 0 }
+);
+/* ⚠️ Nothing measured must not read as zero measured — the footnote below says
+   so and the totals row was contradicting it. `null` where no session carried
+   a figure, which `fmt`/`usd` render as an em dash. */
+const anyPriced = D.sessions.some((s) => typeof s.costUSD === "number");
+const some = (k) => D.sessions.some((s) => typeof s[k] === "number");
+const T = {
+  inp: some("inputTokens") ? totals.inp : null,
+  out: some("outputTokens") ? totals.out : null,
+  cr: some("cacheReadTokens") ? totals.cr : null,
+  cw: some("cacheWriteTokens") ? totals.cw : null,
+  cost: anyPriced ? totals.cost : null,
+};
+
+const fixPct = D.score.found
+  ? Math.round((D.score.fixed / D.score.found) * 100) : 0;
+
+/* Per-reviewer value scoreboard. "Blind spots caught" is the column that
+   answers the actual question: which subscription is earning its keep. */
+const board = {};
+D.rounds.forEach((r) =>
+  r.findings.forEach((f) => {
+    /* A card may stand for several findings of the same shape — nine stale
+       comments, three clocks — so it can declare `count`. Without it the
+       scoreboard would disagree with the headline, and the reader would have
+       to work out which number to believe. */
+    const n = f.count ?? 1;
+    const b = (board[f.reviewer] ??= { found: 0, fixed: 0, missed: 0 });
+    b.found += n;
+    if (f.status === "fixed") b.fixed += n;
+    if (f.wouldHaveMissed) b.missed += n;
+  })
+);
+const boardRows = Object.entries(board)
+  .sort((a, b) => b[1].missed - a[1].missed || b[1].fixed - a[1].fixed)
+  .map(([rev, b], i) => `
+    <tr class="board-row">
+      <td>${["🥇", "🥈", "🥉"][i] ?? "•"}</td>
+      <td class="board-name ${revClass(rev)}">${rev}</td>
+      <td class="num-cell">${b.found}</td>
+      <td class="num-cell" style="color:var(--green)">${b.fixed}</td>
+      <td class="num-cell blindspot">${b.missed} 👁</td>
+    </tr>`).join("");
+
+/* --- the 24-hour strip ---------------------------------------------------
+   Renders only when the JSON carries `timeline`; older reports are untouched.
+   Text from the transcripts (titles, projects) is escaped here: it is the one
+   place the report shows strings nobody typed into the JSON on purpose. */
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const TL = D.timeline;
+const HOUR = 3600e3;
+const tlFmtTime = (ms) => new Date(ms).toLocaleTimeString("en-US",
+  { hour: "numeric", minute: "2-digit" }).toLowerCase();
+const tlFmtDur = (ms) => {
+  const m = Math.max(0, Math.round(ms / 60e3));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+};
+const tlAgo = (ms) => {
+  const m = Math.round(ms / 60e3);
+  if (m < 1) return "still going";
+  if (m < 60) return `stopped ${m} min ago`;
+  if (m < 48 * 60) return `stopped ${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min ago`;
+  return `stopped ${Math.round(m / 1440)} d ago`;
+};
+const tlK = (n) => typeof n !== "number" ? "—"
+  : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n);
+const tlModel = (m) => (m ?? "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
+/* One hue per project so the lanes read as families, not a rainbow. */
+const tlPalette = ["var(--cyan)", "var(--magenta)", "var(--purple)", "var(--green)", "var(--orange)"];
+const tlProjects = TL ? [...new Set(TL.sessions.map((s) => s.project))] : [];
+const tlColor = (p) => tlPalette[tlProjects.indexOf(p) % tlPalette.length];
+
+function tlWindow() {
+  const hours = TL.windowHours ?? 24;
+  const gen = Date.parse(TL.generatedAt);
+  const now = Date.now();
+  /* Slide with the clock while the report is fresh; freeze once it is a
+     record of a day that has passed, or the sessions would drift off the left. */
+  const end = now - gen < 12 * HOUR ? Math.max(now, gen) : gen;
+  return { start: end - hours * HOUR, end, hours, sliding: end !== gen, now };
+}
+
+function tlSegs(segs, w, color, extra = "") {
+  const span = w.end - w.start;
+  return segs.map(([a, b]) => {
+    const l = Math.max(0, (Date.parse(a) - w.start) / span * 100);
+    const r = Math.min(100, (Date.parse(b) - w.start) / span * 100);
+    if (r <= 0 || l >= 100) return "";
+    return `<div class="tl-seg" style="left:${l.toFixed(2)}%;width:${Math.max(0.3, r - l).toFixed(2)}%;background:${color};${extra}"></div>`;
+  }).join("");
+}
+
+function tlRender() {
+  if (!TL || !TL.work) return "";
+  const w = tlWindow();
+  const ticks = [];
+  const first = Math.ceil(w.start / (3 * HOUR)) * 3 * HOUR;
+  for (let t = first; t <= w.end; t += 3 * HOUR) {
+    const pct = (t - w.start) / (w.end - w.start) * 100;
+    ticks.push(`<span class="tl-tick" style="left:${pct.toFixed(2)}%">${tlFmtTime(t)}</span>`);
+  }
+  const nowPct = (w.now - w.start) / (w.end - w.start) * 100;
+  const nowMark = nowPct >= 0 && nowPct <= 100
+    ? `<div class="tl-now" style="left:${nowPct.toFixed(2)}%" title="now"></div>` : "";
+  const ws = Date.parse(TL.work.start), we = Date.parse(TL.work.end);
+  /* The PR's band is the work span, textured by the activity of the session
+     that did it when that session is in the list; a plain bar otherwise. */
+  const own = (TL.sessions ?? []).filter((s) => s.id && (TL.work.sessionIds ?? []).includes(s.id));
+  const workSegs = own.length
+    ? own.flatMap((s) => s.segments).filter(([a, b]) => Date.parse(b) >= ws && Date.parse(a) <= we)
+    : [[TL.work.start, TL.work.end]];
+  const lanes = (TL.sessions ?? []).map((s) => `
+    <div class="tl-name" title="${esc(s.title)} — ${esc(s.id ?? "")}">
+      <span class="tl-chip" style="color:${tlColor(s.project)};border-color:${tlColor(s.project)}">${esc(s.project)}</span>
+      <span class="tl-chip">${esc(tlModel(s.model)) || "?"}</span>
+      ${esc(s.title)}
+    </div>
+    <div class="tl-lane">${tlSegs(s.segments ?? [], w, tlColor(s.project))}${s.active ? "" : ""}</div>
+    <div class="tl-spend"><span style="color:var(--dim)">${tlK(s.tokens)}</span>
+      &nbsp;<b style="color:var(--gold)">${usd(s.costUSD)}</b></div>`).join("");
+  const spend = (TL.sessions ?? []).reduce((a, s) => a + (typeof s.costUSD === "number" ? s.costUSD : 0), 0);
+  const tokens = (TL.sessions ?? []).reduce((a, s) => a + (s.tokens ?? 0), 0);
+  return `
+<div class="panel" id="tl" style="margin-bottom:12px">
+  <div class="round-hd" style="color:var(--cyan);text-align:left;margin-bottom:10px">
+    🕒 When
+    <span style="color:var(--dim);font-weight:400;letter-spacing:0;text-transform:none;margin-left:8px">
+      this PR's work ran <b style="color:var(--text)">${tlFmtTime(ws)} → ${tlFmtTime(we)}</b>
+      · <b style="color:var(--text)">${tlFmtDur(we - ws)}</b>
+      · <span class="tl-live" id="tl-ago">${tlAgo(w.now - we)}</span>
+    </span>
+  </div>
+  <div class="tl-grid">
+    <div class="tl-name" style="color:var(--dim)">24 h ${w.sliding ? "ending now" : "ending " + tlFmtTime(w.end)}</div>
+    <div class="tl-axis">${ticks.join("")}</div>
+    <div></div>
+    <div class="tl-name"><b style="color:var(--cyan)">#${D.pr.number}</b> this PR</div>
+    <div class="tl-lane tl-work" style="position:relative;overflow:visible">
+      <div class="tl-seg" style="left:${Math.max(0,(ws-w.start)/(w.end-w.start)*100).toFixed(2)}%;width:${Math.max(0.3,Math.min(100,(we-w.start)/(w.end-w.start)*100)-Math.max(0,(ws-w.start)/(w.end-w.start)*100)).toFixed(2)}%;background:#1f4a55;box-shadow:none"></div>
+      ${tlSegs(workSegs, w, "var(--cyan)")}${nowMark}
+    </div>
+    <div class="tl-spend" style="color:var(--dim)">${TL.sessions?.length ?? 0} session${(TL.sessions?.length ?? 0) === 1 ? "" : "s"} in window</div>
+    ${lanes}
+  </div>
+  <div class="tl-caption">
+    Every session on this machine active in the window, lanes lit where messages
+    were exchanged (a gap over 20 min breaks the line). Tokens are billable work
+    inside the window; dollars count cache reads too, list price.
+    Window spend: <b style="color:var(--text)">${tlK(tokens)}</b> ·
+    <b class="glow" style="color:var(--gold)">${usd(spend)}</b>
+  </div>
+</div>`;
+}
+
+/* The project, loud, in the header (asked for 2026-09-04: a page that says
+   "#8" without saying which repo is a page the reader has to place). From
+   `pr.repo` when set, else the owner/repo segment of the PR's URL. */
+const repoName = D.pr.repo
+  ?? ((D.pr.url ?? "").match(/github\.com\/([^/]+\/[^/]+)/) ?? [])[1]
+  ?? "";
+
+document.getElementById("app").innerHTML = `
+<header>
+  <div>
+    <h1 class="glow" style="color:var(--cyan)">⚔ PR REVIEW ARENA
+      <span style="color:var(--gold);margin-left:10px">${esc(repoName)}</span></h1>
+    <div style="color:var(--dim);font-size:12px">
+      <a href="${D.pr.url}" style="color:var(--cyan)">${esc(repoName)}#${D.pr.number}</a>
+      · ${D.pr.title} · ${D.pr.branch} · ${D.pr.date}
+    </div>
+  </div>
+  <div style="text-align:center">
+    <div class="glow" style="font-size:34px;font-weight:900;color:var(--gold)">
+      ${D.score.grade}
+    </div>
+    <span class="badge" style="color:var(--green)">${D.pr.verdict}</span>
+  </div>
+</header>
+
+${tlRender()}
+
+<div class="grid" style="margin-bottom:12px">
+  <div class="panel stat">
+    <div class="num" style="color:var(--magenta)">${D.score.found}</div>
+    <div class="lbl">Findings</div>
+  </div>
+  <div class="panel stat">
+    <div class="num" style="color:var(--green)">${D.score.fixed}</div>
+    <div class="lbl">Fixed</div>
+    <div class="bar-wrap"><div class="bar"
+      style="width:${fixPct}%;background:var(--green)"></div></div>
+  </div>
+  <div class="panel stat">
+    <div class="num" style="color:var(--orange)">${D.score.rebutted}</div>
+    <div class="lbl">Rebutted</div>
+  </div>
+</div>
+
+<div class="rounds" style="margin-bottom:12px">
+${D.rounds.map((r, i) => `
+  <div class="panel">
+    <div class="round-hd" style="color:var(--${["cyan","gold","magenta"][i % 3]})">
+      ${r.label} — ${r.findings.reduce((s, f) => s + (f.count ?? 1), 0)} finding${r.findings.reduce((s, f) => s + (f.count ?? 1), 0) === 1 ? "" : "s"}
+    </div>
+    ${r.findings.map((f) => `
+      <details>
+        <summary style="font-size:12px">
+          ${sev(f.severity)}
+          <span class="${revClass(f.reviewer)}">${f.reviewer}</span>
+          <span class="f-title">${f.title}</span>
+          ${f.wouldHaveMissed ? '<span class="missed-flag" title="Claude would have missed this">👁</span>' : ""}
+          ${statusPill(f.status)}
+        </summary>
+        <div class="body">
+          <p style="color:var(--dim);font-size:12px">${f.detail}</p>
+          <div class="finding-line">
+            <span class="rev-claude">🤖 Claude:</span> ${f.claudeResponse}
+            <span class="conf">confidence ${f.confidence}%</span>
+          </div>
+        </div>
+      </details>
+    `).join("") || '<div style="color:var(--dim);text-align:center;font-size:12px">— clean round —</div>'}
+  </div>
+`).join("")}
+</div>
+
+<div class="panel" style="margin-bottom:12px">
+  <div class="round-hd" style="color:var(--gold)">
+    🏅 Reviewer Value Scoreboard
+  </div>
+  <table>
+    <tr><th></th><th>Reviewer</th>
+      <th class="num-cell">Findings</th>
+      <th class="num-cell">Fixed</th>
+      <th class="num-cell">Blind Spots Caught 👁</th></tr>
+    ${boardRows}
+  </table>
+</div>
+
+<details class="panel" style="padding:0" open>
+  <summary style="padding:12px 14px">
+    💰 <span style="color:var(--gold)">TOKEN LEDGER</span>
+    <span style="flex:1"></span>
+    <span class="glow" style="color:var(--gold)">${usd(T.cost)}${anyPriced ? " this PR" : " not yet priced"}</span>
+  </summary>
+  <div class="body">
+    <table>
+      <tr><th>Session</th><th>Model</th>
+        <th class="num-cell">Input</th><th class="num-cell">Output</th>
+        <th class="num-cell">Cache Read</th><th class="num-cell">Cache Write</th>
+        <th class="num-cell">Cost</th></tr>
+      ${D.sessions.map((s) => `
+        <tr><td>${s.name}</td><td style="color:var(--dim)">${s.model}</td>
+          <td class="num-cell">${fmt(s.inputTokens)}</td>
+          <td class="num-cell">${fmt(s.outputTokens)}</td>
+          <td class="num-cell" style="color:var(--cyan)">${fmt(s.cacheReadTokens)}</td>
+          <td class="num-cell" style="color:var(--purple)">${fmt(s.cacheWriteTokens)}</td>
+          <td class="num-cell ${typeof s.costUSD === "number" ? "" : "unmeasured"}"
+              style="${typeof s.costUSD === "number" ? "color:var(--gold)" : ""}">${usd(s.costUSD)}</td></tr>
+      `).join("")}
+      <tr style="font-weight:800">
+        <td colspan="2">TOTAL</td>
+        <td class="num-cell">${fmt(T.inp)}</td>
+        <td class="num-cell">${fmt(T.out)}</td>
+        <td class="num-cell" style="color:var(--cyan)">${fmt(T.cr)}</td>
+        <td class="num-cell" style="color:var(--purple)">${fmt(T.cw)}</td>
+        <td class="num-cell glow" style="color:var(--gold)">${usd(T.cost)}</td>
+      </tr>
+    </table>
+    ${totals.unpriced > 0 ? `<p class="unmeasured" style="font-size:11px;margin-top:8px">
+      ${totals.unpriced} session${totals.unpriced === 1 ? " has" : "s have"} no cost recorded — run
+      <code>/cost</code> and fill <code>costUSD</code>. Shown as “—” rather than $0.00,
+      because a zero would be a measurement nobody took.</p>` : ""}
+  </div>
+</details>
+
+<footer>
+  🏆 Project running total:
+  <b class="glow" style="color:var(--gold)">${usd(D.projectRunningTotalUSD)}</b>
+</footer>`;
+
+/* The "stopped N min ago" figure and the now-marker tick live. Re-rendering
+   the strip is cheaper than tracking its parts, and nothing else on the page
+   moves, so only that panel is replaced. */
+if (TL && TL.work) {
+  setInterval(() => {
+    const el = document.getElementById("tl");
+    if (!el) return;
+    const tmp = document.createElement("div");
+    tmp.innerHTML = tlRender();
+    el.replaceWith(tmp.firstElementChild);
+  }, 30e3);
+}
+</script>
+</body>
+</html>
